@@ -162,6 +162,12 @@
             lucide.createIcons(); // Initialize Lucide icons
             window.attachEventListeners();
 
+            // FIX: Populate the orders table immediately if the user is viewing the list,
+            // using the data already fetched by the real-time listener.
+            if (currentView === 'orders') {
+                window.updateOrdersTable(todayOrders);
+            }
+
             // Display DB status notification if not available (only on connection failure)
             if (!isFirestoreAvailable && currentView !== 'login') {
                  const statusDiv = document.createElement('div');
@@ -606,10 +612,6 @@
                 // Update global data (daily sales)
                 window.updateDailyMetrics(orders);
 
-                // Update the table only if the user is in the 'orders' view
-                if (currentView === 'orders') {
-                    window.updateOrdersTable(orders);
-                }
             }, (error) => {
                 console.error("Error listening to real-time data: ", error);
             });
@@ -631,7 +633,7 @@
             dailySales = totalSales;
             todayOrders = filteredOrders;
 
-            // Re-render to update the sales display if in 'orders' view
+            // Re-render to update the sales display if in 'orders' view (Real-time updates)
             if (currentView === 'orders') {
                 window.updateOrdersTable(todayOrders); // Pass the updated list
             }
