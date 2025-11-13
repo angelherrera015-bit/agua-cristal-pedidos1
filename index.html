@@ -347,6 +347,7 @@
                                     <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cliente/Tel</th>
                                     <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tipo/Cant</th>
                                     <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                                    <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dirección</th> <!-- NUEVA COLUMNA -->
                                     <th class="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Entregado</th>
                                     <th class="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">NIT</th>
                                     <th class="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
@@ -649,7 +650,8 @@
             let html = '';
 
             if (orders.length === 0) {
-                html = `<tr><td colspan="7" class="text-center py-4 text-gray-500">No hay pedidos registrados aún.</td></tr>`;
+                // Modificado colspan a 8 para reflejar la nueva columna de Dirección
+                html = `<tr><td colspan="8" class="text-center py-4 text-gray-500">No hay pedidos registrados aún.</td></tr>`;
             } else {
                 orders.forEach(order => {
                     const isDomicilio = order.orderType === 'A DOMICILIO';
@@ -659,6 +661,11 @@
                     const time = new Date(order.timestamp).toLocaleTimeString('es-GT', {
                         hour: '2-digit', minute: '2-digit'
                     });
+
+                    // Dirección: Mostrar solo para pedidos a domicilio, truncar si es muy larga.
+                    const addressDisplay = isDomicilio 
+                        ? (order.address.length > 30 ? order.address.substring(0, 30) + '...' : order.address)
+                        : '<span class="text-gray-400">Entrega Física</span>';
 
                     html += `
                         <tr class="hover:bg-cyan-50 transition">
@@ -675,9 +682,11 @@
                                 <br><span class="text-sm font-bold mt-1">${order.quantity} Garrafón(es)</span>
                             </td>
                             <td class="px-3 py-2 whitespace-nowrap text-sm font-bold text-gray-800">Q.${order.total.toFixed(2)}</td>
+                            <!-- NUEVA COLUMNA DE DIRECCIÓN -->
+                            <td class="px-3 py-2 whitespace-normal text-sm text-gray-600">${addressDisplay}</td> 
                             <td class="px-3 py-2 whitespace-nowrap text-center">
                                 ${isDomicilio ? `
-                                    <input type="checkbox" data-id="${order.id}" ${order.isDelivered ? 'checked' : ''} ${isAdmin && isFirestoreAvailable ? '' : 'disabled'} class="h-5 w-5 text-water-primary border-gray-300 rounded focus:ring-water-primary cursor-pointer">
+                                    <input type="checkbox" data-id="${order.id}" ${order.isDelivered ? 'checked' : ''} ${isFirestoreAvailable ? '' : 'disabled'} class="h-5 w-5 text-water-primary border-gray-300 rounded focus:ring-water-primary cursor-pointer">
                                 ` : `
                                     <span class="text-xs text-gray-400">N/A</span>
                                 `}
@@ -701,7 +710,7 @@
                                         <span class="text-gray-300 text-xs">Solo Admin</span>
                                     `}
                                 </div>
-                                <p class="text-xs text-center text-gray-400 mt-1 cursor-pointer" onclick="alert('Dirección: ${order.address || 'N/A'}\\nPedido por: ${order.orderedByRole}')">Ver Detalles</p>
+                                <p class="text-xs text-center text-gray-400 mt-1 cursor-pointer" onclick="alert('Registrado por: ${order.orderedByRole}')">Ver Rol</p>
                             </td>
                         </tr>
                     `;
@@ -714,14 +723,19 @@
         };
 
         window.toggleDeliveredStatus = async (id, isDelivered) => {
-            if (!isFirestoreAvailable || userRole !== 'ADMINISTRADOR') return;
+            // Permite que cualquier usuario logueado cambie el estado, solo bloqueado por fallos de DB
+            if (!isFirestoreAvailable) {
+                alert('Error: La base de datos no está disponible. No se puede actualizar el estado de entrega.');
+                return;
+            }
 
             const orderRef = doc(db, COLLECTION_PATH, id);
             try {
+                // Se realiza la actualización
                 await updateDoc(orderRef, { isDelivered: isDelivered });
             } catch (error) {
                 console.error("Error updating delivered status:", error);
-                alert('Error: No se pudo actualizar el estado de entrega.');
+                alert('Error: No se pudo actualizar el estado de entrega. Revisa la conexión.');
             }
         };
 
