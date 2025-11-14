@@ -51,7 +51,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setLogLevel, addDoc, onSnapshot, collection, query, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setLogLevel, addDoc, onSnapshot, collection, query, updateDoc, deleteDoc, getDocs, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Global Firebase and App variables
         let app, db, auth;
@@ -87,11 +87,15 @@
         };
         // =================================================================================
         
-        // --- RUTA DE COLECCIÓN SIMPLIFICADA (orders_ACZ6) ---
-        const COLLECTION_PATH = `orders_ACZ6`;
+        // --- RUTAS DE COLECCIÓN ---
+        const ORDERS_COLLECTION = `orders_ACZ6`;
+        const CUSTOMERS_COLLECTION = `customers_ACZ6`; // Nueva colección para el CRM
 
         // Utility: Get date in YYYY-MM-DD format
         const getTodayDate = () => new Date().toISOString().slice(0, 10);
+        // Utility: Sanitizes phone number to digits only, used as customer ID in DB
+        const sanitizePhone = (phone) => phone.replace(/[^0-9]/g, '');
+
 
         // --- FIREBASE INITIALIZATION AND AUTH ---
         window.initFirebase = async () => {
@@ -255,16 +259,19 @@
                     <h3 class="text-3xl font-extrabold text-water-dark mb-6">${type} <span class="text-xl text-gray-500 ml-3">(${priceText})</span></h3>
 
                     <form id="order-form" class="space-y-4">
+                        <!-- Teléfono del Cliente (Clave para Autocompletado) -->
+                        <div>
+                            <label for="phone" class="block text-sm font-medium text-gray-700">2. Teléfono del Cliente</label>
+                            <div class="relative">
+                                <input type="tel" id="phone" required class="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-water-primary focus:border-water-primary font-bold" placeholder="Ej: 55112233">
+                                <span id="autocomplete-status" class="absolute right-3 top-3 text-xs text-gray-500"></span>
+                            </div>
+                        </div>
+
                         <!-- Nombre del Cliente -->
                         <div>
                             <label for="customerName" class="block text-sm font-medium text-gray-700">1. Nombre del Cliente</label>
                             <input type="text" id="customerName" required class="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-water-primary focus:border-water-primary">
-                        </div>
-
-                        <!-- Teléfono del Cliente -->
-                        <div>
-                            <label for="phone" class="block text-sm font-medium text-gray-700">2. Teléfono del Cliente</label>
-                            <input type="tel" id="phone" required class="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-water-primary focus:border-water-primary" placeholder="Ej: 55112233">
                         </div>
 
                         <!-- Cantidad de Garrafones -->
@@ -334,7 +341,7 @@
                             <span class="text-3xl font-extrabold ml-4">Q.${todaySales}</span>
                         </div>
                         <div class="text-sm font-medium">
-                            Total de Pedidos: ${todayCount}
+                            Total de Pedidos: ${todayOrders.length}
                         </div>
                     </div>
 
@@ -347,7 +354,7 @@
                                     <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cliente/Tel</th>
                                     <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tipo/Cant</th>
                                     <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
-                                    <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dirección</th> <!-- NUEVA COLUMNA -->
+                                    <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dirección</th>
                                     <th class="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Entregado</th>
                                     <th class="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">NIT</th>
                                     <th class="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
@@ -416,10 +423,16 @@
             const orderForm = document.getElementById('order-form');
             const backHomeButton = document.getElementById('back-home-button');
             const quantityInput = document.getElementById('quantity');
+            const phoneInput = document.getElementById('phone');
 
             if (orderForm) orderForm.onsubmit = window.handleFormSubmit;
             if (backHomeButton) backHomeButton.onclick = () => window.renderApp('home');
             if (quantityInput) quantityInput.oninput = window.updateTotal;
+            // NEW: Add event listener for phone input change (autocompletion)
+            if (phoneInput) {
+                // Use 'blur' for when the user leaves the field, or 'input' for typing
+                phoneInput.oninput = window.handlePhoneInput;
+            }
 
             // 4. Orders List Screen
             const backHomeButtonOrders = document.getElementById('back-home-button-orders');
@@ -502,6 +515,98 @@
             document.getElementById('total-display').textContent = `Q.${total}`;
         };
 
+        // --- NEW: Autocompletion Logic ---
+        let autocompleteTimer;
+        window.handlePhoneInput = (e) => {
+            clearTimeout(autocompleteTimer);
+            const phoneInput = e.target;
+            const phone = sanitizePhone(phoneInput.value);
+            const statusSpan = document.getElementById('autocomplete-status');
+
+            if (phone.length < 7) { // Wait for a reasonable phone length (e.g., 7 digits)
+                statusSpan.textContent = '';
+                return;
+            }
+
+            statusSpan.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin inline-block"></i> Buscando...';
+            lucide.createIcons();
+
+            autocompleteTimer = setTimeout(async () => {
+                await window.autocompleteClientData(phone);
+            }, 500); // Wait 500ms after user stops typing
+        };
+
+        window.autocompleteClientData = async (phone) => {
+            const statusSpan = document.getElementById('autocomplete-status');
+            const customerRef = doc(db, CUSTOMERS_COLLECTION, phone);
+
+            try {
+                const customerDoc = await new Promise((resolve, reject) => {
+                    // Use onSnapshot for immediate real-time check, but resolve/reject after one call
+                    const unsubscribe = onSnapshot(customerRef, (doc) => {
+                        unsubscribe(); // Stop listening after the first snapshot
+                        resolve(doc);
+                    }, reject);
+                });
+
+                if (customerDoc.exists()) {
+                    const data = customerDoc.data();
+                    document.getElementById('customerName').value = data.customerName || '';
+                    document.getElementById('nit').value = data.nit || '';
+                    // Only autocomplete address if it's a Domicilio order
+                    const currentType = localStorage.getItem('currentOrderType');
+                    if (currentType === 'A DOMICILIO') {
+                         document.getElementById('address').value = data.address || '';
+                    }
+                   
+                    statusSpan.textContent = '¡Cliente encontrado!';
+                    statusSpan.classList.add('text-green-600');
+                    statusSpan.classList.remove('text-gray-500', 'text-red-600');
+                } else {
+                    statusSpan.textContent = 'Cliente nuevo. Llenar datos.';
+                    statusSpan.classList.add('text-red-600');
+                    statusSpan.classList.remove('text-gray-500', 'text-green-600');
+                    
+                    // Clear fields if no client found
+                    document.getElementById('customerName').value = '';
+                    document.getElementById('nit').value = '';
+                    if (localStorage.getItem('currentOrderType') === 'A DOMICILIO') {
+                         document.getElementById('address').value = '';
+                    }
+                }
+            } catch (error) {
+                console.error("Error fetching customer data:", error);
+                statusSpan.textContent = 'Error de búsqueda.';
+                statusSpan.classList.add('text-red-600');
+                statusSpan.classList.remove('text-gray-500', 'text-green-600');
+            }
+        };
+
+        // --- NEW: Customer Update Logic ---
+        window.updateCustomerDB = async (orderData) => {
+            const phone = sanitizePhone(orderData.phone);
+            const customerRef = doc(db, CUSTOMERS_COLLECTION, phone);
+
+            // Data to be saved/updated in the customer database
+            const customerData = {
+                customerName: orderData.customerName,
+                phone: orderData.phone,
+                nit: orderData.nit,
+                // Only save address if it was a Domicilio order
+                address: orderData.orderType === 'A DOMICILIO' ? orderData.address : 'N/A',
+                lastOrderDate: orderData.timestamp
+            };
+
+            try {
+                // Use setDoc to create or overwrite the document with the phone as the ID
+                await setDoc(customerRef, customerData, { merge: true });
+                console.log("Customer data saved/updated successfully:", phone);
+            } catch (e) {
+                console.error("Error saving customer data: ", e);
+            }
+        };
+
+
         window.handleFormSubmit = async (e) => {
             e.preventDefault();
 
@@ -547,7 +652,12 @@
                 formMessage.textContent = '❌ Error: No se pudo conectar a Firebase. El pedido NO fue guardado.';
             } else {
                 try {
-                    await addDoc(collection(db, COLLECTION_PATH), orderData);
+                    // 1. Save Order
+                    await addDoc(collection(db, ORDERS_COLLECTION), orderData);
+                    
+                    // 2. Save/Update Customer Info
+                    await window.updateCustomerDB(orderData);
+
 
                     formMessage.innerHTML = `¡Pedido de ${quantity} garrafones registrado con éxito! Total: Q.${total.toFixed(2)}`;
                     document.getElementById('order-form').reset();
@@ -599,7 +709,7 @@
                 return;
             }
 
-            const ordersQuery = query(collection(db, COLLECTION_PATH));
+            const ordersQuery = query(collection(db, ORDERS_COLLECTION));
 
             onSnapshot(ordersQuery, (snapshot) => {
                 const orders = [];
@@ -651,7 +761,7 @@
 
             if (orders.length === 0) {
                 // Modificado colspan a 8 para reflejar la nueva columna de Dirección
-                html = `<tr><td colspan="8" class="text-center py-4 text-gray-500">No hay pedidos registrados aún.</td></tr>`;
+                html = `<tr><td colspan="8" class="text-center py-4 text-gray-500">No hay pedidos registrados hoy.</td></tr>`;
             } else {
                 orders.forEach(order => {
                     const isDomicilio = order.orderType === 'A DOMICILIO';
@@ -682,7 +792,7 @@
                                 <br><span class="text-sm font-bold mt-1">${order.quantity} Garrafón(es)</span>
                             </td>
                             <td class="px-3 py-2 whitespace-nowrap text-sm font-bold text-gray-800">Q.${order.total.toFixed(2)}</td>
-                            <!-- NUEVA COLUMNA DE DIRECCIÓN -->
+                            <!-- COLUMNA DE DIRECCIÓN -->
                             <td class="px-3 py-2 whitespace-normal text-sm text-gray-600">${addressDisplay}</td> 
                             <td class="px-3 py-2 whitespace-nowrap text-center">
                                 ${isDomicilio ? `
@@ -729,7 +839,7 @@
                 return;
             }
 
-            const orderRef = doc(db, COLLECTION_PATH, id);
+            const orderRef = doc(db, ORDERS_COLLECTION, id);
             try {
                 // Se realiza la actualización
                 await updateDoc(orderRef, { isDelivered: isDelivered });
@@ -773,7 +883,7 @@
             if (!isFirestoreAvailable || userRole !== 'ADMINISTRADOR') return;
             
             const id = document.getElementById('edit-id').value;
-            const orderRef = doc(db, COLLECTION_PATH, id);
+            const orderRef = doc(db, ORDERS_COLLECTION, id);
 
             const updatedName = document.getElementById('edit-customerName').value;
             const updatedPhone = document.getElementById('edit-phone').value;
@@ -798,7 +908,20 @@
             }
 
             try {
+                // 1. Update Order
                 await updateDoc(orderRef, updateData);
+
+                // 2. Update Customer Info after order update
+                const customerDataToUpdate = {
+                    customerName: updatedName,
+                    phone: updatedPhone,
+                    nit: currentOrder.nit, // NIT is not in edit modal, so we reuse the old one
+                    address: updatedAddress,
+                    lastOrderDate: new Date().getTime()
+                };
+                await window.updateCustomerDB(customerDataToUpdate);
+
+
                 window.closeEditModal();
             } catch (error) {
                 console.error("Error updating order:", error);
@@ -812,7 +935,7 @@
             const confirmDelete = prompt('Escribe "ELIMINAR" para confirmar que quieres borrar este pedido:');
             if (confirmDelete !== 'ELIMINAR') return;
 
-            const orderRef = doc(db, COLLECTION_PATH, id);
+            const orderRef = doc(db, ORDERS_COLLECTION, id);
             try {
                 await deleteDoc(orderRef);
             } catch (error) {
