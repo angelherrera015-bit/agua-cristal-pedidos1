@@ -1,54 +1,1102 @@
-13.11.2025 09 INGRESO APT 
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AGUA CRISTAL ZONA 6 - Control de Pedidos</title>
+    <!-- Carga de Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Carga de la fuente Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- Carga de Firebase SDKs (v11.6.1) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, serverTimestamp, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Desactivar logs de Firebase si no es necesario para producción.
+        // setLogLevel('Debug');
+
+        // --- Configuración Global de Firebase (MANDATORIO) ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let app, db, auth;
+        let userId = null;
+        let userRole = 'GUEST'; // GUEST, USER, ADMIN
+        let isAuthReady = false;
+        let currentView = 'login';
+        let ordersCollectionRef = null;
+        let clientsCollectionRef = null;
+        let snapshot = { docs: [] }; // Almacena el último snapshot para la exportación CSV
+
+        // Credenciales codificadas
+        const PASSWORDS = {
+            'Angel2006$': 'ADMIN',
+            'Aguacristal06': 'USER',
+        };
+
+        // Precios
+        const PRICE_DOMICILIO = 10.00;
+        const PRICE_FISICA = 9.00;
+
+        // --- Configuración LLM (Gemini API) ---
+        const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
+        const API_KEY = ""; // Dejar vacío; el entorno lo proveerá.
+        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${API_KEY}`;
+        
+        // Estilos y paleta de colores de Tailwind
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'water-blue': {
+                            50: '#e0f7fa',
+                            100: '#b2ebf2',
+                            200: '#80deea',
+                            300: '#4dd0e1',
+                            400: '#26c6da',
+                            500: '#00bcd4', // Color principal
+                            600: '#00acc1',
+                            700: '#0097a7',
+                            800: '#00838f',
+                            900: '#006064',
+                        },
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+
+        // --- Funciones de Utilidad ---
+        const getClientCollectionPath = () => `artifacts/${appId}/public/data/clients`;
+        const getOrderCollectionPath = () => `artifacts/${appId}/public/data/orders`;
+
+        // Helper para verificar si un timestamp es de hoy
+        const isToday = (timestamp) => {
+            if (!timestamp) return false;
+            const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+            return date.toDateString() === new Date().toDateString();
+        };
+
+        function formatDate(timestamp) {
+            if (!timestamp) return 'N/A';
+            // Firebase Timestamps have a toDate() method.
+            const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+            const options = { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+            return date.toLocaleDateString('es-GT', options);
+        }
+
+        // Función para manejar reintentos con backoff exponencial
+        async function fetchWithRetry(url, options, maxRetries = 5) {
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (response.status === 429 && i < maxRetries - 1) {
+                        const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        continue;
+                    }
+                    if (!response.ok) {
+                        throw new Error(`API Error: ${response.status} ${response.statusText}`);
+                    }
+                    return response.json();
+                } catch (error) {
+                    if (i === maxRetries - 1) throw error;
+                }
+            }
+        }
+
+        // --- Lógica de Inicialización y Autenticación ---
+        window.onload = async () => {
+            try {
+                if (Object.keys(firebaseConfig).length === 0) {
+                    console.error("Firebase config is missing. Cannot initialize.");
+                    document.getElementById('app-container').innerHTML = `<p class="text-red-600 p-8">Error: Configuración de Firebase no encontrada.</p>`;
+                    return;
+                }
+
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // 1. Manejo de la autenticación inicial con el token personalizado.
+                await handleInitialAuth();
+
+                // 2. Establecer el listener de cambios de estado de autenticación.
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        userRole = userRole === 'GUEST' ? 'GUEST' : userRole; // Mantiene el rol si ya fue asignado
+                        isAuthReady = true;
+                        console.log("Auth state changed. User ID:", userId);
+                        if (currentView === 'login') {
+                            // Si ya está autenticado (aunque sea anónimo) y el rol aún es GUEST, muestra login para asignar rol
+                            renderView(currentView);
+                        } else {
+                            initAppCollections();
+                            renderView(currentView);
+                        }
+                    } else {
+                        userId = null;
+                        userRole = 'GUEST';
+                        isAuthReady = true;
+                        currentView = 'login';
+                        renderView(currentView);
+                    }
+                    
+                    // FIX: Uso de null check para el spinner
+                    const spinner = document.getElementById('login-spinner');
+                    if (currentView === 'login' && spinner) {
+                         spinner.classList.add('hidden');
+                    }
+                });
+
+            } catch (error) {
+                console.error("Error during Firebase initialization:", error);
+                document.getElementById('app-container').innerHTML = `<p class="text-red-600 p-8">Error grave al inicializar la app. Revisa la consola.</p>`;
+            }
+        };
+
+        async function handleInitialAuth() {
+            try {
+                if (initialAuthToken) {
+                    console.log("Signing in with custom token...");
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    console.log("Signing in anonymously...");
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Error during initial sign-in:", error);
+                // Intenta sign in anónimo como fallback
+                await signInAnonymously(auth);
+            }
+        }
+
+        function initAppCollections() {
+            ordersCollectionRef = collection(db, getOrderCollectionPath());
+            clientsCollectionRef = collection(db, getClientCollectionPath());
+            // Inicia la escucha de pedidos en tiempo real
+            if (currentView === 'order_history') {
+                setupOrderListener();
+            }
+        }
+
+        // Función de autenticación
+        window.login = async (password) => {
+            const role = PASSWORDS[password];
+            if (role) {
+                userRole = role;
+                currentView = 'main_menu';
+                initAppCollections();
+                renderView(currentView);
+            } else {
+                document.getElementById('login-error').textContent = 'Contraseña incorrecta.';
+                document.getElementById('login-password').value = '';
+            }
+        };
+
+        // --- Lógica de Vistas (Routing simple) ---
+        // Se añade un argumento 'data' opcional para pasar información (ej. el tipo de pedido)
+        window.navigateTo = (viewName, data = null) => {
+            currentView = viewName;
+            renderView(viewName, data);
+        };
+
+        // Se acepta el argumento 'data'
+        window.renderView = (viewName, data = null) => {
+            const container = document.getElementById('app-container');
+            container.innerHTML = ''; // Limpiar vista anterior
+
+            // FIX: Añadir null check para header-panel
+            const headerPanel = document.getElementById('header-panel');
+            if (headerPanel) {
+                headerPanel.classList.add('hidden');
+            }
+
+            switch (viewName) {
+                case 'login':
+                    container.appendChild(createLoginView());
+                    break;
+                case 'main_menu':
+                    container.appendChild(createMainMenuView());
+                    if (headerPanel) headerPanel.classList.remove('hidden');
+                    break;
+                case 'order_form':
+                    // El tipo de pedido se recibe en el argumento 'data'
+                    const orderType = data;
+                    container.appendChild(createOrderFormView(orderType));
+                    if (headerPanel) headerPanel.classList.remove('hidden');
+                    break;
+                case 'order_history':
+                    container.appendChild(createOrderHistoryView());
+                    if (headerPanel) headerPanel.classList.remove('hidden');
+                    // Iniciar el listener de Firestore al cargar la vista de historial
+                    setupOrderListener();
+                    break;
+                default:
+                    container.innerHTML = `<p class="p-8 text-red-600">Vista no encontrada.</p>`;
+            }
+        };
+
+        // --- Vistas ---
+
+        function createLoginView() {
+            const div = document.createElement('div');
+            div.className = 'min-h-screen flex items-center justify-center bg-water-blue-50';
+            div.innerHTML = `
+                <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-sm transform transition duration-500 hover:scale-[1.02]">
+                    <h1 class="text-3xl font-extrabold text-center text-water-blue-700 mb-6">
+                        AGUA CRISTAL ZONA 6
+                    </h1>
+                    <p class="text-center text-gray-500 mb-8">
+                        Ingresa tu contraseña para acceder al sistema.
+                    </p>
+                    <div class="space-y-4">
+                        <input type="password" id="login-password"
+                               class="w-full p-3 border-2 border-water-blue-200 rounded-lg focus:ring-water-blue-500 focus:border-water-blue-500 transition duration-150"
+                               placeholder="Contraseña"
+                               onkeydown="if(event.key === 'Enter') login(document.getElementById('login-password').value)">
+                        <button onclick="login(document.getElementById('login-password').value)"
+                                class="w-full bg-water-blue-500 hover:bg-water-blue-600 text-white font-bold p-3 rounded-lg shadow-md transition duration-200 transform hover:shadow-lg hover:-translate-y-0.5">
+                            Ingresar
+                        </button>
+                    </div>
+                    <p id="login-error" class="text-red-500 text-center mt-4"></p>
+                    <div id="login-spinner" class="mt-4 text-center ${isAuthReady ? 'hidden' : ''}">
+                         <div class="animate-spin inline-block w-6 h-6 border-4 border-water-blue-500 border-t-transparent rounded-full" role="status"></div>
+                         <span class="ml-2 text-water-blue-700">Cargando Firebase...</span>
+                    </div>
+                </div>
+            `;
+            return div;
+        }
+
+        function createMainMenuView() {
+            const div = document.createElement('div');
+            div.className = 'min-h-screen flex items-center justify-center bg-water-blue-50 p-4';
+            div.innerHTML = `
+                <div class="w-full max-w-lg bg-white p-8 rounded-xl shadow-2xl text-center">
+                    <h2 class="text-3xl font-bold text-water-blue-700 mb-8">
+                        Seleccione el Tipo de Pedido
+                    </h2>
+                    <!-- Se elimina el input hidden order-type-temp -->
+                    <div class="space-y-6">
+                        <!-- Se pasa el tipo de pedido directamente a navigateTo -->
+                        <button onclick="navigateTo('order_form', 'DOMICILIO')"
+                                class="w-full flex items-center justify-center p-6 text-2xl font-extrabold text-white bg-water-blue-500 rounded-xl shadow-xl hover:bg-water-blue-600 transition duration-300 transform hover:scale-[1.02] active:scale-100">
+                            <svg class="w-8 h-8 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.727A8 8 0 016.343 16.727L4.5 18.5V20h15v-1.5L17.657 16.727zM12 14v-4m-4 4h8"></path></svg>
+                            A DOMICILIO (Q.${PRICE_DOMICILIO.toFixed(2)})
+                        </button>
+                        <!-- Se pasa el tipo de pedido directamente a navigateTo -->
+                        <button onclick="navigateTo('order_form', 'FISICA')"
+                                class="w-full flex items-center justify-center p-6 text-2xl font-extrabold text-water-blue-700 bg-water-blue-200 border-2 border-water-blue-400 rounded-xl shadow-xl hover:bg-water-blue-300 transition duration-300 transform hover:scale-[1.02] active:scale-100">
+                            <svg class="w-8 h-8 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V11a2 2 0 012-2z"></path></svg>
+                            ENTREGA FÍSICA (Q.${PRICE_FISICA.toFixed(2)})
+                        </button>
+                    </div>
+                    <button onclick="navigateTo('order_history')"
+                            class="mt-8 text-water-blue-600 hover:text-water-blue-800 font-semibold flex items-center mx-auto transition duration-150">
+                            <svg class="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                            Control de Pedidos
+                    </button>
+                </div>
+            `;
+            return div;
+        }
+
+        let isEditMode = false;
+        let currentEditDocId = null;
+
+        function createOrderFormView(orderType, orderData = {}) {
+            isEditMode = !!orderData.id;
+            currentEditDocId = orderData.id || null;
+
+            const price = orderType === 'DOMICILIO' ? PRICE_DOMICILIO : PRICE_FISICA;
+            const title = isEditMode ? `Editar Pedido (${orderType})` : `Registro de Pedido (${orderType})`;
+            const isDelivery = orderType === 'DOMICILIO';
+
+            const div = document.createElement('div');
+            div.className = 'min-h-screen p-4 sm:p-8 bg-water-blue-50';
+            div.innerHTML = `
+                <div class="max-w-xl mx-auto bg-white p-6 sm:p-8 rounded-xl shadow-2xl">
+                    <h2 class="text-2xl font-bold text-water-blue-700 mb-6 border-b pb-2">
+                        ${title}
+                    </h2>
+                    <form id="order-form" class="space-y-4">
+                        <!-- Campo Oculto para Tipo -->
+                        <input type="hidden" id="form-order-type" value="${orderType}">
+
+                        <!-- 1. Teléfono del Cliente -->
+                        <div>
+                            <label for="client-phone" class="block text-sm font-medium text-gray-700">Teléfono <span class="text-red-500">*</span></label>
+                            <div class="flex space-x-2 mt-1">
+                                <input type="tel" id="client-phone" required
+                                       value="${orderData.phone || ''}"
+                                       class="flex-grow p-3 border-2 border-gray-300 rounded-lg focus:ring-water-blue-500 focus:border-water-blue-500 transition"
+                                       placeholder="55123456" onkeyup="searchClient(this.value)">
+                                <button type="button" onclick="searchClient(document.getElementById('client-phone').value, true)"
+                                        class="p-3 bg-water-blue-100 text-water-blue-600 rounded-lg hover:bg-water-blue-200 transition duration-150">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 2. Nombre del Cliente -->
+                        <div>
+                            <label for="client-name" class="block text-sm font-medium text-gray-700">Nombre <span class="text-red-500">*</span></label>
+                            <input type="text" id="client-name" required
+                                   value="${orderData.name || ''}"
+                                   class="mt-1 w-full p-3 border-2 border-gray-300 rounded-lg focus:ring-water-blue-500 focus:border-water-blue-500 transition"
+                                   placeholder="Nombre completo">
+                        </div>
+
+                        <!-- 3. Cantidad de Garrafones -->
+                        <div class="flex items-center space-x-4">
+                            <div class="flex-grow">
+                                <label for="quantity" class="block text-sm font-medium text-gray-700">Cantidad (1-9) <span class="text-red-500">*</span></label>
+                                <input type="number" id="quantity" required min="1" max="9" value="${orderData.quantity || 1}"
+                                       oninput="calculateTotal(${price})"
+                                       class="mt-1 w-full p-3 border-2 border-gray-300 rounded-lg focus:ring-water-blue-500 focus:border-water-blue-500 transition">
+                            </div>
+                            <div class="text-center">
+                                <label class="block text-sm font-medium text-gray-700">Total (Q.)</label>
+                                <div id="order-total" class="text-2xl font-extrabold text-water-blue-700 p-2 rounded-lg bg-water-blue-100">
+                                    ${(orderData.quantity * price || price).toFixed(2)}
+                                </div>
+                                <input type="hidden" id="price-per-unit" value="${price}">
+                            </div>
+                        </div>
+
+                        <!-- 4. NIT (Opcional) -->
+                        <div>
+                            <label for="client-nit" class="block text-sm font-medium text-gray-700">NIT (Opcional)</label>
+                            <input type="text" id="client-nit"
+                                   value="${orderData.nit || ''}"
+                                   class="mt-1 w-full p-3 border-2 border-gray-300 rounded-lg focus:ring-water-blue-500 focus:border-water-blue-500 transition"
+                                   placeholder="C/F o número de NIT">
+                        </div>
+
+                        <!-- 5. Dirección (Solo Domicilio) -->
+                        <div id="address-field" class="${isDelivery ? 'block' : 'hidden'}">
+                            <label for="client-address" class="block text-sm font-medium text-gray-700">Dirección ${isDelivery ? '<span class="text-red-500">*</span>' : ''}</label>
+                            <textarea id="client-address" rows="2" ${isDelivery ? 'required' : ''}
+                                      class="mt-1 w-full p-3 border-2 border-gray-300 rounded-lg focus:ring-water-blue-500 focus:border-water-blue-500 transition"
+                                      placeholder="Dirección exacta, zona, referencias">${orderData.address || ''}</textarea>
+                        </div>
+
+                        <!-- Sección de Gemini LLM (Mensaje de Lealtad) -->
+                        <div class="pt-4 border-t border-water-blue-200 mt-4">
+                            <button type="button" onclick="generateLoyaltyMessage()"
+                                    class="w-full p-3 font-bold text-white rounded-lg shadow-md bg-purple-500 hover:bg-purple-600 transition duration-200 flex items-center justify-center space-x-2">
+                                <span class="text-xl">✨</span> Generar Mensaje de Lealtad (Gemini AI)
+                            </button>
+                            <div id="loyalty-message-result" class="mt-3 p-3 bg-water-blue-50 rounded-lg hidden">
+                                <!-- Contenido generado por LLM se insertará aquí -->
+                            </div>
+                        </div>
+
+                        <!-- Mensaje de Error -->
+                        <p id="form-message" class="text-center font-semibold pt-4"></p>
+
+                        <!-- Botones de Acción -->
+                        <div class="pt-4 flex flex-col space-y-3">
+                            <button type="submit"
+                                    class="w-full p-3 font-bold text-white rounded-lg shadow-md bg-water-blue-500 hover:bg-water-blue-600 transition duration-200">
+                                ${isEditMode ? 'Guardar Cambios' : 'Guardar Pedido'}
+                            </button>
+                            ${isDelivery ? `
+                                <button type="button" onclick="sendWhatsAppMessage()"
+                                        id="whatsapp-btn"
+                                        class="w-full p-3 font-bold text-white rounded-lg shadow-md bg-green-500 hover:bg-green-600 transition duration-200 flex items-center justify-center space-x-2 disabled:opacity-50" disabled>
+                                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12.03 2.75A9.28 9.28 0 002.75 12c0 1.6.43 3.12 1.25 4.4L3 21l4.7-1.3A9.28 9.28 0 0012 21.25a9.28 9.28 0 009.28-9.28A9.28 9.28 0 0012.03 2.75zM12 19.3c-1.5 0-2.9-.4-4.2-.95l-.3-.18-3.2.9.85-3.15-.2-.35a7.3 7.3 0 01-1.15-4.8c0-4 3.3-7.25 7.3-7.25 4 0 7.3 3.3 7.3 7.3a7.3 7.3 0 01-7.3 7.3zm3.7-5.5a.6.6 0 00-.85-.15l-1.3-.8c-.1-.05-.2-.1-.3-.05-.1.05-.2.15-.3.25l-.85 1.1a.4.4 0 01-.4.15l-1.2-.6c-.35-.2-.65-.45-1.05-.75-.4-.3-.7-.65-1-.95a4.2 4.2 0 01-.7-1.15c-.05-.1-.05-.2 0-.3l.15-.35.45-.6a.5.5 0 000-.5l-.3-.65a.6.6 0 00-.45-.4l-.85-.2c-.1-.05-.2-.05-.3-.05-.1 0-.2 0-.3.05-.1.05-.2.1-.3.2-.25.2-.4.45-.6.7a1.8 1.8 0 00-.25.35c-.1.25-.15.5-.15.75 0 .25 0 .5.1.75l.1.35 1.4 2.8c.05.1.1.2.2.3.1.1.25.2.4.25.15.05.3.1.45.1.2 0 .4-.05.6-.1.15-.05.3-.1.4-.2l.15-.1.6-.5c.35-.3.7-.6 1.1-1.05.05-.05.1-.1.15-.15a.5.5 0 00.1-.3z"/></svg>
+                                    Enviar Confirmación (WhatsApp)
+                                </button>
+                            `: ''}
+                            <button type="button" onclick="navigateTo('order_history')"
+                                    class="w-full p-3 font-bold text-gray-700 rounded-lg border border-gray-300 hover:bg-gray-100 transition duration-200">
+                                ${isEditMode ? 'Cancelar Edición' : 'Volver al Menú'}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            `;
+
+            // Inicializar el cálculo total al cargar la vista
+            setTimeout(() => {
+                const quantityInput = document.getElementById('quantity');
+                if (quantityInput) {
+                    calculateTotal(price);
+                }
+
+                // Listener para guardar/editar
+                document.getElementById('order-form').addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    saveOrder();
+                });
+            }, 0);
+
+            return div;
+        }
+
+        function createOrderHistoryView() {
+            const isAdmin = userRole === 'ADMIN';
+            const div = document.createElement('div');
+            div.className = 'min-h-screen p-4 sm:p-8 bg-water-blue-50';
+            div.innerHTML = `
+                <div class="max-w-4xl mx-auto bg-white p-6 sm:p-8 rounded-xl shadow-2xl">
+                    <h2 class="text-2xl font-bold text-water-blue-700 mb-4 border-b pb-2 flex justify-between items-center">
+                        Control de Pedidos en Tiempo Real
+                        <span class="text-sm font-normal text-gray-500">Perfil: ${isAdmin ? 'ADMINISTRADOR' : 'USUARIO 1'}</span>
+                    </h2>
+
+                    <!-- Panel de Resumen/Ventas -->
+                    <div class="bg-water-blue-100 p-4 rounded-lg mb-6 shadow-inner flex flex-wrap justify-between items-center">
+                        <div class="text-lg font-semibold text-water-blue-800">
+                            Ventas de Hoy: <span id="daily-sales-total" class="text-3xl font-extrabold text-water-blue-700 ml-2">Q0.00</span>
+                        </div>
+                        ${isAdmin ? `
+                            <div class="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-3 w-full sm:w-auto mt-3 sm:mt-0">
+                                <button onclick="generateDailySalesAnalysis()"
+                                        class="p-2 text-sm font-bold text-white rounded-lg shadow-md bg-purple-500 hover:bg-purple-600 transition duration-200 flex items-center justify-center">
+                                    <span class="text-lg mr-1">✨</span> Analizar Ventas Diarias (Gemini AI)
+                                </button>
+                                <button onclick="exportToCSV()"
+                                        class="p-2 text-sm font-bold text-white rounded-lg shadow-md bg-green-500 hover:bg-green-600 transition duration-200 flex items-center justify-center">
+                                    <svg class="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                                    Descargar CSV
+                                </button>
+                            </div>
+                        ` : ''}
+                    </div>
+                    
+                    <!-- Contenedor del resultado del análisis LLM -->
+                    ${isAdmin ? `
+                        <div id="analysis-result" class="bg-water-blue-50 p-4 rounded-lg mb-6 shadow-inner hidden">
+                            <!-- Análisis de Gemini se insertará aquí -->
+                        </div>
+                    ` : ''}
+
+                    <!-- Tabla de Pedidos -->
+                    <div class="overflow-x-auto rounded-lg shadow-md">
+                        <table class="min-w-full bg-white text-sm">
+                            <thead class="bg-water-blue-700 text-white">
+                                <tr>
+                                    <th class="p-3 text-left">Fecha/Hora</th>
+                                    <th class="p-3 text-left">Cliente/Teléfono/Dirección</th>
+                                    <th class="p-3 text-left">Tipo</th>
+                                    <th class="p-3 text-center">Cant.</th>
+                                    <th class="p-3 text-right">Total</th>
+                                    <th class="p-3 text-center">Repartido</th>
+                                    ${isAdmin ? '<th class="p-3 text-center">Acciones</th>' : ''}
+                                </tr>
+                            </thead>
+                            <tbody id="orders-table-body" class="divide-y divide-gray-200">
+                                <!-- Pedidos se insertarán aquí por onSnapshot -->
+                                <tr><td colspan="${isAdmin ? 7 : 6}" class="p-4 text-center text-gray-500">Cargando pedidos...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+            return div;
+        }
+
+        // --- Lógica de Pedidos (Firestore) ---
+        let unsubscribeOrders = null;
+
+        function setupOrderListener() {
+            // Cancelar cualquier escucha anterior
+            if (unsubscribeOrders) {
+                unsubscribeOrders();
+            }
+            if (!ordersCollectionRef) return;
+
+            // Consultar y ordenar por fecha de creación descendente
+            const q = query(ordersCollectionRef, orderBy('createdAt', 'desc'));
+
+            // Escuchar en tiempo real
+            unsubscribeOrders = onSnapshot(q, (newSnapshot) => {
+                snapshot = newSnapshot; // Almacenar el snapshot global
+                const orders = [];
+                let totalSalesToday = 0;
+                const today = new Date().toDateString();
+
+                newSnapshot.forEach(doc => {
+                    const data = doc.data();
+                    const order = { id: doc.id, ...data };
+                    orders.push(order);
+
+                    // Cálculo de ventas del día
+                    if (data.createdAt && data.createdAt.toDate().toDateString() === today) {
+                        totalSalesToday += data.total;
+                    }
+                });
+
+                document.getElementById('daily-sales-total').textContent = `Q${totalSalesToday.toFixed(2)}`;
+                renderOrdersTable(orders);
+
+            }, (error) => {
+                console.error("Error al escuchar pedidos en tiempo real:", error);
+                const tbody = document.getElementById('orders-table-body');
+                if (tbody) {
+                    tbody.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-red-500">Error al cargar datos: ${error.message}</td></tr>`;
+                }
+            });
+        }
+
+        function renderOrdersTable(orders) {
+            const tbody = document.getElementById('orders-table-body');
+            if (!tbody) return; // Si la vista no es el historial, ignorar
+
+            if (orders.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="${userRole === 'ADMIN' ? 7 : 6}" class="p-4 text-center text-gray-500">No hay pedidos registrados.</td></tr>`;
+                return;
+            }
+
+            const isAdmin = userRole === 'ADMIN';
+
+            tbody.innerHTML = orders.map(order => {
+                const isDelivery = order.type === 'DOMICILIO';
+                const deliveredChecked = order.isDelivered ? 'checked' : '';
+                const deliveredDisabled = isDelivery ? '' : 'disabled';
+                const deliveredClass = order.isDelivered ? 'bg-green-100' : (isDelivery ? 'bg-yellow-100' : 'bg-gray-100');
+                const rowClass = order.isDelivered ? 'hover:bg-green-50' : (isDelivery ? 'hover:bg-yellow-50' : 'hover:bg-gray-50');
+                
+                // --- Mostrar Dirección de Envío para pedidos Domicilio ---
+                let clientCellContent = `
+                    ${order.name}
+                    <span class="block text-xs text-gray-500">(${order.phone})</span>
+                `;
+
+                if (isDelivery) {
+                    clientCellContent += `
+                        <span class="block text-xs font-normal text-water-blue-800 mt-1 break-words">
+                            <!-- Icono de ubicación/entrega -->
+                            <svg class="w-4 h-4 inline-block mr-1 -mt-0.5 text-water-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.727A8 8 0 016.343 16.727L4.5 18.5V20h15v-1.5L17.657 16.727zM12 14v-4m-4 4h8"></path></svg>
+                            ${order.address || 'Dirección no especificada'}
+                        </span>
+                    `;
+                }
+                // -------------------------------------------------------------------
+
+                return `
+                    <tr class="${rowClass} transition duration-150" data-id="${order.id}">
+                        <td class="p-3 text-gray-600">${formatDate(order.createdAt)}</td>
+                        <td class="p-3 text-gray-800 font-semibold">
+                            ${clientCellContent}
+                        </td>
+                        <td class="p-3 text-center">
+                            <span class="px-2 py-1 text-xs font-medium rounded-full ${isDelivery ? 'bg-water-blue-100 text-water-blue-800' : 'bg-gray-200 text-gray-700'}">
+                                ${order.type === 'DOMICILIO' ? 'A Domicilio' : 'Física'}
+                            </span>
+                        </td>
+                        <td class="p-3 text-center font-bold">${order.quantity}</td>
+                        <td class="p-3 text-right font-bold text-lg text-water-blue-700">Q${order.total.toFixed(2)}</td>
+                        <td class="p-3 text-center ${deliveredClass}">
+                            <input type="checkbox" id="check-${order.id}" ${deliveredChecked} ${deliveredDisabled}
+                                   onchange="updateDeliveredStatus('${order.id}', this.checked)"
+                                   class="form-checkbox h-5 w-5 text-water-blue-600 rounded border-gray-300 focus:ring-water-blue-500 cursor-pointer">
+                            ${!isDelivery ? '<span class="block text-xs text-gray-500">N/A</span>' : ''}
+                        </td>
+                        ${isAdmin ? `
+                            <td class="p-3 text-center space-x-2 whitespace-nowrap">
+                                <button onclick="editOrder('${order.id}')"
+                                        class="text-water-blue-600 hover:text-water-blue-800 transition duration-150">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                                </button>
+                                <button onclick="showDeleteModal('${order.id}', '${order.name}')"
+                                        class="text-red-500 hover:text-red-700 transition duration-150">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                </button>
+                            </td>
+                        ` : ''}
+                    </tr>
+                `;
+            }).join('');
+        }
+        
+        // Función LLM para generar Análisis de Ventas Diarias
+        window.generateDailySalesAnalysis = async () => {
+            if (userRole !== 'ADMIN') return;
+            const messageElement = document.getElementById('analysis-result');
+            const today = new Date().toDateString();
+            
+            // --- Data Aggregation for Today ---
+            const todayOrders = snapshot.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter(order => isToday(order.createdAt));
+
+            if (todayOrders.length === 0) {
+                messageElement.innerHTML = `<p class="text-yellow-700 font-medium">No hay pedidos registrados para hoy (${today}).</p>`;
+                messageElement.classList.remove('hidden');
+                return;
+            }
+
+            const totalOrders = todayOrders.length;
+            const totalSales = todayOrders.reduce((sum, order) => sum + order.total, 0);
+            const domesticOrders = todayOrders.filter(o => o.type === 'DOMICILIO').length;
+            const physicalOrders = todayOrders.filter(o => o.type === 'FISICA').length;
+            const totalQuantity = todayOrders.reduce((sum, order) => sum + order.quantity, 0);
+
+            // Prompt construction based on aggregated data
+            const userQuery = `Analiza las ventas de hoy (${today}) para AGUA CRISTAL ZONA 6: 
+                - Ventas totales: Q${totalSales.toFixed(2)}.
+                - Total de pedidos: ${totalOrders}.
+                - Pedidos a domicilio: ${domesticOrders}.
+                - Pedidos en sitio: ${physicalOrders}.
+                - Total de garrafones vendidos: ${totalQuantity}.
+                Genera un resumen de no más de 40 palabras que destaque el desempeño y sugiera un área de enfoque para mañana (ej. aumentar ventas a domicilio). Usa un tono profesional y motivador.`;
+            
+            messageElement.innerHTML = `<p class="text-center text-water-blue-600 font-medium">✨ Generando análisis de ventas con Gemini...</p>`;
+            messageElement.classList.remove('hidden');
+
+            const systemPrompt = "Actúa como un analista de negocios enfocado en ventas diarias. Proporciona un resumen de desempeño conciso (máx. 40 palabras) y una sugerencia de acción clara para el próximo día, basándote en los datos proporcionados.";
+
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+            };
+
+            try {
+                const response = await fetchWithRetry(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const text = response.candidates?.[0]?.content?.parts?.[0]?.text || "Análisis no disponible.";
+
+                messageElement.innerHTML = `
+                    <p class="font-medium text-water-blue-800 mb-2">Análisis Generado por IA:</p>
+                    <p class="text-sm italic text-gray-700">${text}</p>
+                `;
+            } catch (error) {
+                console.error("Error calling Gemini API for analysis:", error);
+                messageElement.innerHTML = `<p class="text-red-500 font-medium">Error de conexión al generar el análisis.</p>`;
+            }
+        };
 
 
+        // --- CRUD y Lógica Específica ---
 
-https://kiosko.progreso.com/
-____________________________________________
-ptmo: 
-CORRELATIVO: 
-NOMBRE COMPLETO: 
-NO. DPI: 
-TELEFONO: 
-NIT:
-CORREO ELECTRONICO:
-CUENTA BI:
-MOTIVO DE PRESTAMO:
-DIRECCION DE VIVIENDA:
-EMPRESA Y SEDE: 
+        // Función de búsqueda de cliente (para rellenar datos)
+        window.searchClient = async (phone, explicitSearch = false) => {
+            const nameInput = document.getElementById('client-name');
+            const nitInput = document.getElementById('client-nit');
+            const addressInput = document.getElementById('client-address');
+            const messageElement = document.getElementById('form-message');
 
-____________________________________________
+            // Limpiar mensaje
+            messageElement.textContent = '';
+            messageElement.className = 'text-center font-semibold';
 
-bienvenido a la asociación para el Progreso e los Trabajadores.(APT)
+            // No buscar si la colección no está inicializada o el teléfono es muy corto y no es búsqueda explícita
+            if (!clientsCollectionRef) {
+                 messageElement.textContent = 'Error de inicialización: Base de clientes no disponible.';
+                 messageElement.classList.add('text-red-600');
+                 return;
+            }
+            if (phone.length < 5 && !explicitSearch) return;
 
-Los datos que necesitaria para poder ingresarle a la asociación son los siguientes: 
+            try {
+                // Consulta directa por el campo 'phone'
+                const q = query(clientsCollectionRef, where('phone', '==', phone), limit(1));
+                const querySnapshot = await getDocs(q);
 
-- Nombre completo.
+                if (querySnapshot.docs.length > 0) {
+                    const client = querySnapshot.docs[0].data();
+                    nameInput.value = client.name || '';
+                    nitInput.value = client.nit || '';
+                    
+                    // Rellenar dirección solo si el campo existe y es Domicilio
+                    const formType = document.getElementById('form-order-type');
+                    if (formType && formType.value === 'DOMICILIO' && addressInput) {
+                        addressInput.value = client.address || '';
+                    }
 
-- Correlativo.
+                    if (explicitSearch) {
+                        messageElement.textContent = `Cliente encontrado: ${client.name}. Datos rellenados.`;
+                        messageElement.classList.add('text-green-600');
+                    }
+                } else {
+                    // Limpiar campos si el cliente no es encontrado en búsqueda explícita
+                    if (explicitSearch) {
+                        nameInput.value = '';
+                        nitInput.value = '';
+                        if (addressInput) addressInput.value = '';
 
-- Número de DPI:
-  2297 00683 0101
-- Número de Nit:
-  -
-- Dirección de Vivienda:
-  22 Avenida 13 calle 12-82 Barrio San Antonio zona 6
-- Correo Electronico.
-  -
-- Puesto.
-  Conserje
-- Sede y Empresa para la que labora. 
-- Nombre completo de Esposa.
-  soltera
-- Nombre de padre y madre completo
-- BENEFICIARIOS: (MINIMO 2)
-  lidia Aracely Vasquez hija 
-  Eunice Micaela Vasquez hija
+                        messageElement.textContent = 'Cliente no encontrado. Ingresa los datos manualmente.';
+                        messageElement.classList.add('text-yellow-600');
+                    }
+                }
+                // Habilitar botón de WhatsApp después de la búsqueda si hay datos de contacto
+                document.getElementById('whatsapp-btn')?.removeAttribute('disabled');
+            } catch (error) {
+                console.error("Error searching client:", error);
+                messageElement.textContent = 'Error al buscar cliente en la base de datos. Revisa la consola.';
+                messageElement.classList.add('text-red-600');
+            }
+        };
+
+        // Función LLM para generar mensaje de lealtad
+        window.generateLoyaltyMessage = async () => {
+            const name = document.getElementById('client-name').value.trim();
+            const quantity = parseInt(document.getElementById('quantity').value) || 0;
+            const messageElement = document.getElementById('form-message');
+            const resultArea = document.getElementById('loyalty-message-result');
+
+            if (!name || quantity < 1) {
+                messageElement.textContent = 'Ingresa el nombre y la cantidad de garrafones para generar el mensaje.';
+                messageElement.classList.add('text-red-600');
+                resultArea.classList.add('hidden');
+                return;
+            }
+
+            messageElement.textContent = '✨ Generando mensaje de lealtad...';
+            messageElement.classList.remove('text-red-600', 'text-green-600', 'text-yellow-600');
+            resultArea.innerHTML = `<div class="p-3 text-center text-water-blue-600">Cargando...</div>`;
+            resultArea.classList.remove('hidden');
+
+            const systemPrompt = "Actúa como un asistente de marketing amigable para una compañía de agua pura. Genera un mensaje de lealtad y agradecimiento de no más de 30 palabras. Incluye un agradecimiento por la compra y una frase corta sobre la frescura del agua, pero no menciones precios o el total.";
+            const userQuery = `El cliente se llama ${name} y ha comprado ${quantity} garrafón(es) de agua. Crea un mensaje de lealtad para él.`;
+
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+            };
+
+            try {
+                const response = await fetchWithRetry(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const text = response.candidates?.[0]?.content?.parts?.[0]?.text || "No se pudo generar el mensaje. Intenta de nuevo.";
+
+                resultArea.innerHTML = `
+                    <p class="font-medium text-gray-700 mb-2">Mensaje Generado:</p>
+                    <div class="bg-gray-100 p-3 rounded-lg border border-gray-300">
+                        <p class="text-sm italic text-gray-800">${text}</p>
+                    </div>
+                `;
+                messageElement.textContent = 'Mensaje de lealtad listo.';
+                messageElement.classList.add('text-green-600');
+
+            } catch (error) {
+                console.error("Error calling Gemini API:", error);
+                messageElement.textContent = 'Error al generar el mensaje con Gemini.';
+                messageElement.classList.add('text-red-600');
+                resultArea.innerHTML = `<div class="p-3 text-center text-red-500">Error de conexión con el LLM.</div>`;
+            }
+        };
 
 
-  - Nombre completo.
-  - Parentesco.
-  - Número de teléfono. 
+        // Función para guardar pedido y cliente
+        window.saveOrder = async () => {
+            const phone = document.getElementById('client-phone').value.trim();
+            const name = document.getElementById('client-name').value.trim();
+            const quantity = parseInt(document.getElementById('quantity').value);
+            const nit = document.getElementById('client-nit').value.trim();
+            const address = document.getElementById('client-address')?.value.trim() || 'N/A';
+            const type = document.getElementById('form-order-type').value;
+            const total = parseFloat(document.getElementById('order-total').textContent.replace('Q', ''));
+            const messageElement = document.getElementById('form-message');
 
+            messageElement.textContent = 'Guardando...';
+            messageElement.classList.remove('text-red-600', 'text-green-600', 'text-yellow-600');
 
+            if (!phone || !name || quantity < 1) {
+                messageElement.textContent = 'Por favor, completa los campos obligatorios.';
+                messageElement.classList.add('text-red-600');
+                return;
+            }
+            if (type === 'DOMICILIO' && (!address || address === 'N/A')) {
+                messageElement.textContent = 'La dirección es obligatoria para pedidos a domicilio.';
+                messageElement.classList.add('text-red-600');
+                return;
+            }
 
-el centro de costos de la APT es el 499061
+            const orderData = {
+                phone,
+                name,
+                quantity,
+                nit,
+                address,
+                type,
+                total,
+                isDelivered: false,
+                // Si estamos editando, no actualizamos el createdAt, solo el updatedAt
+                ...(!isEditMode && { createdAt: serverTimestamp() }),
+                ...(isEditMode && { updatedAt: serverTimestamp() }),
+                recordedBy: auth.currentUser?.email || auth.currentUser?.uid || 'Anon',
+            };
+
+            try {
+                if (isEditMode && currentEditDocId) {
+                    // Edición
+                    await updateDoc(doc(ordersCollectionRef, currentEditDocId), orderData);
+                    messageElement.textContent = 'Pedido actualizado exitosamente.';
+                    messageElement.classList.add('text-green-600');
+                    // Volver a la vista de historial después de la edición
+                    setTimeout(() => navigateTo('order_history'), 1500);
+                } else {
+                    // Nuevo pedido
+                    await addDoc(ordersCollectionRef, orderData);
+                    messageElement.textContent = 'Pedido registrado exitosamente.';
+                    messageElement.classList.add('text-green-600');
+
+                    // Guardar/Actualizar datos del cliente en la base de clientes
+                    await saveClientData(phone, name, nit, address);
+
+                    // Limpiar el formulario y regresar al menú principal
+                    document.getElementById('order-form').reset();
+                    setTimeout(() => navigateTo('main_menu'), 1500);
+                }
+
+            } catch (error) {
+                console.error("Error al guardar el pedido:", error);
+                messageElement.textContent = 'Error al guardar el pedido. Revisa la consola.';
+                messageElement.classList.add('text-red-600');
+            }
+        };
+
+        window.saveClientData = async (phone, name, nit, address) => {
+            try {
+                // Se asume que clientsCollectionRef está inicializado
+                const q = query(clientsCollectionRef, where('phone', '==', phone), limit(1));
+                const querySnapshot = await getDocs(q);
+
+                const clientData = { phone, name, nit, address, updatedAt: serverTimestamp() };
+
+                if (querySnapshot.docs.length > 0) {
+                    // Cliente ya existe, actualizar
+                    const docId = querySnapshot.docs[0].id;
+                    await updateDoc(doc(clientsCollectionRef, docId), clientData);
+                } else {
+                    // Nuevo cliente, agregar
+                    await addDoc(clientsCollectionRef, { ...clientData, createdAt: serverTimestamp() });
+                }
+            } catch (error) {
+                console.error("Error al guardar datos del cliente:", error);
+                // No bloquear el flujo principal
+            }
+        };
+
+        window.calculateTotal = (price) => {
+            const quantity = parseInt(document.getElementById('quantity').value) || 0;
+            const total = quantity * price;
+            const totalElement = document.getElementById('order-total');
+            if (totalElement) {
+                totalElement.textContent = total.toFixed(2);
+            }
+        };
+
+        window.sendWhatsAppMessage = () => {
+            const phone = document.getElementById('client-phone').value.trim();
+            const name = document.getElementById('client-name').value.trim();
+            const quantity = parseInt(document.getElementById('quantity').value) || 0;
+            const totalElement = document.getElementById('order-total');
+            const total = parseFloat(totalElement ? totalElement.textContent.replace('Q', '') : 0);
+            const address = document.getElementById('client-address')?.value.trim() || 'Recogida en Tienda';
+            const messageElement = document.getElementById('form-message');
+
+            if (!phone || !name || quantity < 1) {
+                messageElement.textContent = 'Completa los datos del pedido antes de enviar WhatsApp.';
+                messageElement.classList.add('text-red-600');
+                return;
+            }
+
+            const message = `¡Hola ${name}! 👋 Te confirmamos tu pedido con AGUA CRISTAL ZONA 6:
+
+💧 Cantidad: ${quantity} garrafón(es)
+💰 Total: Q${total.toFixed(2)}
+📍 Dirección: ${address}
+
+Tu pedido se está preparando y pronto estará contigo. ¡Gracias por preferirnos! 😊`;
+
+            // Asegurar que el teléfono tenga el código de país (502) si no lo tiene. Asumo que el cliente ya lo tiene si está en Guatemala.
+            const cleanPhone = phone.startsWith('502') ? phone : '502' + phone;
+
+            const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+            window.open(whatsappUrl, '_blank');
+        };
+
+        window.updateDeliveredStatus = async (docId, isDelivered) => {
+            try {
+                await updateDoc(doc(ordersCollectionRef, docId), {
+                    isDelivered: isDelivered,
+                    deliveredAt: isDelivered ? serverTimestamp() : null,
+                    updatedAt: serverTimestamp(),
+                });
+                console.log(`Estado de entrega actualizado para ${docId}`);
+            } catch (error) {
+                console.error("Error al actualizar estado de entrega:", error);
+            }
+        };
+
+        window.editOrder = async (docId) => {
+            if (userRole !== 'ADMIN') return;
+            try {
+                const docSnap = await getDoc(doc(ordersCollectionRef, docId));
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    const orderData = { id: docId, ...data };
+                    // Navegar al formulario de edición
+                    const orderType = data.type; // Guardar el tipo antes de navegar
+                    // Se pasa el orderType directamente a navigateTo
+                    navigateTo('order_form', orderType);
+                    // Esperar que la vista se cargue para rellenar
+                    setTimeout(() => {
+                        document.getElementById('client-phone').value = orderData.phone;
+                        document.getElementById('client-name').value = orderData.name;
+                        document.getElementById('quantity').value = orderData.quantity;
+                        document.getElementById('client-nit').value = orderData.nit || '';
+                        if (orderData.type === 'DOMICILIO' && document.getElementById('client-address')) {
+                            document.getElementById('client-address').value = orderData.address || '';
+                        }
+                        const pricePerUnit = document.getElementById('price-per-unit').value;
+                        calculateTotal(pricePerUnit);
+                    }, 50);
+                }
+            } catch (error) {
+                console.error("Error al cargar pedido para edición:", error);
+            }
+        };
+
+        window.showDeleteModal = (docId, clientName) => {
+            if (userRole !== 'ADMIN') return;
+            const modal = document.getElementById('custom-modal');
+            const modalMessage = document.getElementById('modal-message');
+            const confirmButton = document.getElementById('modal-confirm-btn');
+
+            if (modal && modalMessage && confirmButton) {
+                modalMessage.innerHTML = `¿Estás seguro de que deseas eliminar el pedido de <span class="font-bold">${clientName}</span>? Esta acción es irreversible.`;
+                confirmButton.onclick = () => deleteOrder(docId);
+                modal.classList.remove('hidden');
+            }
+        };
+
+        window.hideModal = () => {
+            document.getElementById('custom-modal')?.classList.add('hidden');
+        };
+
+        window.deleteOrder = async (docId) => {
+            hideModal();
+            if (userRole !== 'ADMIN') return;
+            try {
+                await deleteDoc(doc(ordersCollectionRef, docId));
+                console.log(`Pedido ${docId} eliminado exitosamente.`);
+            } catch (error) {
+                console.error("Error al eliminar pedido:", error);
+                // Usar un mensaje en el modal o en un área de la página, no alert()
+                alert('No se pudo eliminar el pedido. Revisa la consola.'); 
+            }
+        };
+
+        window.exportToCSV = () => {
+            if (userRole !== 'ADMIN') return;
+
+            const allOrders = snapshot.docs.map(doc => {
+                const data = doc.data();
+                return {
+                    Fecha: formatDate(data.createdAt),
+                    Cliente: data.name,
+                    Teléfono: data.phone,
+                    Tipo: data.type,
+                    Cantidad: data.quantity,
+                    Total: data.total,
+                    NIT: data.nit || 'C/F',
+                    Dirección: data.address || 'N/A',
+                    Repartido: data.isDelivered ? 'SI' : 'NO',
+                    GrabadoPor: data.recordedBy,
+                }
+            });
+
+            if (allOrders.length === 0) {
+                 alert('No hay pedidos para exportar.');
+                 return;
+            }
+
+            // Generar el CSV con datos completos
+            const headers = Object.keys(allOrders[0]).join(',');
+            const rows = allOrders.map(obj => Object.values(obj).map(val => `"${String(val).replace(/"/g, '""')}"`).join(',')).join('\n');
+            const csvContent = headers + '\n' + rows;
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.setAttribute('href', url);
+            link.setAttribute('download', `pedidos_agua_cristal_${new Date().toISOString().slice(0, 10)}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        };
+    </script>
+
+    <style>
+        .btn-shadow {
+            box-shadow: 0 4px 6px -1px rgba(0, 188, 212, 0.4), 0 2px 4px -2px rgba(0, 188, 212, 0.4);
+        }
+        .bg-water-blue-500 { background-color: #00bcd4; }
+        .hover\:bg-water-blue-600:hover { background-color: #00acc1; }
+        .text-water-blue-700 { color: #0097a7; }
+        /* Estilos para el formulario de cantidad */
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+    </style>
+</head>
+<body class="font-sans">
+
+    <!-- Panel de Cabecera (Visible en Menú y Formularios) -->
+    <header id="header-panel" class="p-3 bg-water-blue-500 text-white shadow-lg hidden">
+        <div class="max-w-4xl mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold">AGUA CRISTAL ZONA 6</h1>
+            <div class="flex space-x-4 items-center">
+                <button onclick="navigateTo('main_menu')"
+                        class="p-2 rounded-lg hover:bg-water-blue-600 transition duration-150">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                </button>
+                <button onclick="navigateTo('order_history')"
+                        class="p-2 rounded-lg hover:bg-water-blue-600 transition duration-150">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Contenedor Principal de la Aplicación -->
+    <main id="app-container">
+        <!-- El contenido se cargará aquí por la función renderView() -->
+    </main>
+
+    <!-- Modal de Confirmación Personalizado (Para Borrar) -->
+    <div id="custom-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-50 transition-opacity duration-300">
+        <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm mx-4 transform scale-100 transition-transform duration-300">
+            <h3 class="text-xl font-bold text-red-600 mb-4">Confirmar Eliminación</h3>
+            <p id="modal-message" class="text-gray-700 mb-6"></p>
+            <div class="flex justify-end space-x-3">
+                <button onclick="hideModal()"
+                        class="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-100 transition">
+                    Cancelar
+                </button>
+                <button id="modal-confirm-btn"
+                        class="px-4 py-2 text-white bg-red-500 rounded-lg hover:bg-red-600 transition">
+                    Eliminar
+                </button>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
