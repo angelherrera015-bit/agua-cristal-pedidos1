@@ -1,228 +1,908 @@
 <!DOCTYPE html>
+
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AGUA CRISTAL ZONA 6 - Pedidos</title>
-    <!-- Carga de Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Carga de íconos Lucide para React (usados aquí como iconos generales) -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <style>
-        /* Estilos personalizados para la paleta azul agua */
-        :root {
-            --color-primary: #06b6d4; /* Tailwind cyan-500 */
-            --color-secondary: #0891b2; /* Tailwind cyan-600 */
-            --color-light: #f0fdfa; /* Tailwind cyan-50 */
-            --color-dark: #0e7490; /* Tailwind cyan-700 */
-        }
-        .bg-water-primary { background-color: var(--color-primary); }
-        .hover\:bg-water-secondary:hover { background-color: var(--color-secondary); }
-        .text-water-primary { color: var(--color-primary); }
-        .border-water-primary { border-color: var(--color-primary); }
-        .shadow-water { box-shadow: 0 10px 15px -3px rgba(6, 182, 212, 0.5), 0 4px 6px -2px rgba(6, 182, 212, 0.05); }
-
-        body { font-family: 'Inter', sans-serif; background-color: var(--color-light); }
-
-        /* Estilo para los botones principales */
-        .main-button {
-            transition: all 0.3s ease;
-            transform: scale(1);
-        }
-        .main-button:hover {
-            transform: scale(1.03);
-            box-shadow: 0 20px 25px -5px rgba(6, 182, 212, 0.4);
-        }
-
-        /* Estilo para el botón de WhatsApp */
-        .whatsapp-button {
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 6px -1px rgba(34, 197, 94, 0.1), 0 2px 4px -2px rgba(34, 197, 94, 0.06);
-        }
-        .whatsapp-button:hover {
-            background-color: #16a34a; /* green-600 */
-            transform: translateY(-1px);
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AGUA CRISTAL ZONA 6 - Pedidos</title>
+<!-- Carga de Tailwind CSS -->
+<script src="https://www.google.com/search?q=https://cdn.tailwindcss.com"></script>
+<!-- Fuente Inter -->
+<link href="https://www.google.com/search?q=https://fonts.googleapis.com/css2%3Ffamily%3DInter:wght%40400%3B600%3B700%26display%3Dswap" rel="stylesheet">
+<style>
+body { font-family: 'Inter', sans-serif; background-color: #e0f7fa; } /* Azul Agua muy claro /
+.card { box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); }
+.btn-primary { background-color: #00bcd4; color: white; transition: background-color 0.2s; } / Azul Agua principal /
+.btn-primary:hover { background-color: #0097a7; }
+.btn-secondary { background-color: #4dd0e1; color: white; transition: background-color 0.2s; }
+.btn-secondary:hover { background-color: #26c6da; }
+.input-style { border-color: #4dd0e1; }
+/ Estilo para el ícono de loading /
+.spinner { border: 4px solid rgba(255, 255, 255, 0.3); border-top: 4px solid #fff; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+/ Estilos para la tabla responsive */
+@media (max-width: 768px) {
+.table-responsive thead { display: none; }
+.table-responsive tr { display: block; margin-bottom: 1rem; border: 1px solid #ddd; border-radius: 0.5rem; padding: 0.5rem; background-color: white; }
+.table-responsive td { display: block; text-align: right; padding-left: 50%; position: relative; font-size: 0.875rem; }
+.table-responsive td::before {
+content: attr(data-label);
+position: absolute;
+left: 0.5rem;
+width: 45%;
+padding-right: 10px;
+white-space: nowrap;
+text-align: left;
+font-weight: 600;
+color: #0097a7;
+}
+}
+</style>
 </head>
-<body class="min-h-screen flex flex-col antialiased">
+<body class="min-h-screen flex flex-col">
 
-    <!-- Firebase SDKs -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setLogLevel, addDoc, onSnapshot, collection, query, where, getDocs, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+<!-- Configuración e Inicialización de Firebase -->
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, onSnapshot, collection, query, orderBy, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Global Firebase and App variables
-        let app, db, auth;
-        let userId = 'anon';
-        let userRole = null; // 'ADMINISTRADOR' or 'USUARIO 1'
-        let currentView = 'login';
-        let dailySales = 0;
-        let todayOrders = [];
-        let isFirestoreAvailable = true; // Nuevo flag para el estado de la DB
+    // Configuración de Firebase (Tu información proporcionada)
+    const FIREBASE_CONFIG = {
+        apiKey: "AIzaSyAlrX-AEX7P-Ntpg30_62YHbL6Z3zxykDQ",
+        authDomain: "aguacristal-3668c.firebaseapp.com",
+        projectId: "aguacristal-3668c",
+        storageBucket: "aguacristal-3668c.firebasestorage.app",
+        messagingSenderId: "777148704166",
+        appId: "1:777148704166:web:c522eaac1d469ac0829b67"
+    };
+    const APP_ID = FIREBASE_CONFIG.projectId || 'aguacristal-3668c';
+    // Colección de Pedidos y Colección de Clientes
+    const ORDER_COLLECTION_PATH = `orders_ACZ6`;
+    const CUSTOMER_COLLECTION_PATH = `customers_ACZ6`;
 
-        // --- PRECIOS ---
-        const PRECIO_DOMICILIO = 10.00;
-        const PRECIO_FISICA = 9.00;
+    // Variables Globales
+    let app;
+    let auth;
+    let db;
+    let userId = null;
+    let userRole = null;
+    let todayOrders = [];
+    let isAuthReady = false;
 
-        // --- ROLES y CREDENCIALES (Hardcoded para simulación) ---
-        const CREDENTIALS = {
-            'ADMINISTRADOR': 'Angel2006$',
-            'USUARIO 1': 'Aguacristal06'
-        };
+    // Credenciales de Usuario
+    const USER_CREDENTIALS = {
+        'ADMINISTRADOR': 'Angel2006$',
+        'USUARIO 1': 'Aguacristal06'
+    };
+    
+    // Precios
+    const PRICE_DOMICILIO = 10.00;
+    const PRICE_FISICA = 9.00;
 
-        // =================================================================================
-        // BLOQUE DE CONFIGURACIÓN DE FIREBASE
-        // SI EJECUTAS ESTE ARCHIVO FUERA DEL ENTORNO DE TRABAJO (EJ: EN TU PROPIO SERVIDOR),
-        // DEBES REEMPLAZAR LA VARIABLE FIREBASE_CONFIG CON TUS CREDENCIALES REALES.
-        // =================================================================================
-        const APP_ID = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const INITIAL_AUTH_TOKEN = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+    // Utilidad para limpiar el teléfono (quitar caracteres no numéricos)
+    window.sanitizePhone = (phone) => phone.replace(/[^0-9]/g, '');
+
+    // Función para inicializar Firebase
+    window.initFirebase = async () => {
+        try {
+            // setLogLevel('debug'); // Descomentar para ver logs de Firebase
+            app = initializeApp(FIREBASE_CONFIG);
+            db = getFirestore(app);
+            auth = getAuth(app);
+
+            // Autenticación anónima para obtener un user ID
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    userId = user.uid;
+                    console.log("Firebase Auth OK. User ID:", userId);
+                    isAuthReady = true;
+                    // Iniciar la escucha en tiempo real
+                    window.setupRealtimeListener();
+                } else {
+                    console.log("No user signed in. Signing in anonymously...");
+                    await signInAnonymously(auth);
+                }
+            });
+        } catch (error) {
+            console.error("Error al inicializar o autenticar Firebase:", error);
+            // Si Firebase falla, entra en modo de demostración (no guarda datos)
+            isAuthReady = true;
+            window.setupRealtimeListener(); // Carga datos de ejemplo
+        }
+    };
+
+    // --- LÓGICA DE GESTIÓN DE CLIENTES (CRM) ---
+    
+    // Función para actualizar o crear el registro del cliente
+    window.updateCustomerDB = async (customerData) => {
+        const sanitizedPhone = window.sanitizePhone(customerData.phone);
+        if (!sanitizedPhone) return;
+
+        try {
+            const customerDocRef = doc(db, CUSTOMER_COLLECTION_PATH, sanitizedPhone);
+            const customerSnap = await getDoc(customerDocRef);
+            
+            const dataToSave = {
+                name: customerData.name || '',
+                phone: sanitizedPhone,
+                nit: customerData.nit || '',
+                address: customerData.address || '',
+                last_order_at: new Date().toISOString()
+            };
+
+            if (customerSnap.exists()) {
+                // Si existe, actualiza solo los campos que puedan haber cambiado
+                await setDoc(customerDocRef, dataToSave, { merge: true });
+            } else {
+                // Si no existe, crea el nuevo registro
+                await setDoc(customerDocRef, dataToSave);
+            }
+        } catch (error) {
+            console.error("Error al guardar/actualizar cliente:", error);
+            window.showMessage('Error al guardar datos del cliente.', 'error');
+        }
+    };
+
+    // Función para buscar cliente y autocompletar
+    window.autocompleteClientData = async (phoneInput) => {
+        const phone = phoneInput.value;
+        const sanitizedPhone = window.sanitizePhone(phone);
+        const statusLabel = document.getElementById('client-status');
         
-        // *** INSERTA AQUÍ TU OBJETO firebaseConfig (DEL PASO 3 ARRIBA) ***
-        // Ejemplo de estructura: 
-        // const FIREBASE_CONFIG = { apiKey: "...", authDomain: "...", projectId: "...", ... };
-        // Si no pegas tu configuración, la aplicación buscará las credenciales del entorno.
-        const FIREBASE_CONFIG = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-        // =================================================================================
+        if (sanitizedPhone.length < 5) {
+            statusLabel.textContent = 'Ingrese más dígitos para buscar';
+            statusLabel.className = 'text-gray-500 text-sm';
+            return;
+        }
 
+        // Muestra estado de búsqueda
+        statusLabel.textContent = 'Buscando cliente...';
+        statusLabel.className = 'text-yellow-600 text-sm';
+        
+        try {
+            const customerDocRef = doc(db, CUSTOMER_COLLECTION_PATH, sanitizedPhone);
+            const customerSnap = await getDoc(customerDocRef);
 
-        const COLLECTION_PATH = `/artifacts/${APP_ID}/public/data/orders`;
+            if (customerSnap.exists()) {
+                const data = customerSnap.data();
+                // Autocompletar campos si existen
+                document.getElementById('customer-name').value = data.name || '';
+                document.getElementById('customer-nit').value = data.nit || '';
+                if (data.address) {
+                    document.getElementById('customer-address').value = data.address || '';
+                }
 
-        // Utility: Get date in YYYY-MM-DD format
-        const getTodayDate = () => new Date().toISOString().slice(0, 10);
+                statusLabel.textContent = 'Cliente encontrado (autocompletado)';
+                statusLabel.className = 'text-green-600 font-semibold text-sm';
+            } else {
+                // Limpia campos de dirección y nombre si no se encuentra
+                document.getElementById('customer-name').value = '';
+                document.getElementById('customer-nit').value = '';
+                document.getElementById('customer-address').value = '';
 
-        // --- FIREBASE INITIALIZATION AND AUTH ---
-        window.initFirebase = async () => {
-            const loadingMessageElement = document.getElementById('loading-message');
-
-            if (Object.keys(FIREBASE_CONFIG).length === 0) {
-                console.error("Firebase Config not available. Entering demonstration mode.");
-                isFirestoreAvailable = false;
-                // Set dummy variables (null is fine, functions will check isFirestoreAvailable)
-                app = null;
-                db = null;
-                auth = { currentUser: { uid: 'dummy-user' } }; // Mock auth object for login to proceed
-
-                loadingMessageElement.innerHTML = '<span class="text-yellow-600 font-bold">⚠️ Advertencia:</span> Base de datos inactiva (Modo de Demostración). Solo funcionará la interfaz.';
-                
-                // Set up dummy data for the list view
-                window.setupRealtimeListener(); 
-                
-                window.renderApp(); 
-                return;
+                statusLabel.textContent = 'Cliente nuevo, registre los datos.';
+                statusLabel.className = 'text-blue-600 font-semibold text-sm';
             }
+        } catch (error) {
+            console.error("Error en autocompletado:", error);
+            statusLabel.textContent = 'Error al buscar en la BD.';
+            statusLabel.className = 'text-red-600 text-sm';
+        }
+    };
 
-            // --- REAL FIREBASE INIT ---
-            try {
-                setLogLevel('debug');
-                app = initializeApp(FIREBASE_CONFIG);
-                db = getFirestore(app);
-                auth = getAuth(app);
+    // --- LÓGICA PRINCIPAL DE PEDIDOS ---
 
-                // Sign in with custom token or anonymously
-                await new Promise(resolve => {
-                    onAuthStateChanged(auth, async (user) => {
-                        if (user) {
-                            userId = user.uid;
-                            console.log("Firebase Auth successful. User ID:", userId);
-                        } else {
-                            if (INITIAL_AUTH_TOKEN) {
-                                await signInWithCustomToken(auth, INITIAL_AUTH_TOKEN);
-                            } else {
-                                await signInAnonymously(auth);
-                            }
-                        }
-                        resolve();
-                    });
-                });
+    // Función para escuchar la base de datos en tiempo real
+    window.setupRealtimeListener = () => {
+        if (!isAuthReady || !db) {
+            console.log("Database not available. Using demo data.");
+            window.showMessage("Modo de Demostración: No se pueden guardar ni cargar datos en tiempo real.", 'warning');
+            todayOrders = window.getDemoData();
+            window.updateDailyMetrics();
+            return;
+        }
 
-                // Start listening to orders
-                window.setupRealtimeListener();
+        const q = query(collection(db, ORDER_COLLECTION_PATH), orderBy('timestamp', 'desc'));
 
-                // Initial UI rendering
-                window.renderApp();
+        onSnapshot(q, (snapshot) => {
+            const allOrders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            
+            // Filtra solo los pedidos de hoy para la visualización y métricas
+            const today = new Date().toISOString().substring(0, 10);
+            todayOrders = allOrders.filter(order => order.timestamp && order.timestamp.substring(0, 10) === today);
 
-            } catch (error) {
-                console.error("Error during Firebase initialization:", error);
-                loadingMessageElement.textContent = `Error de Firebase: ${error.message}`;
-                isFirestoreAvailable = false; // Ensure flag is set on error too
-                window.renderApp('login'); // Render the login screen even on auth/init failure
-            }
-        };
+            window.updateDailyMetrics();
+        }, (error) => {
+            console.error("Error listening to real-time data:", error);
+            window.showMessage("Error: No se pudo conectar a la base de datos o permisos insuficientes.", 'error');
+        });
+    };
 
-        // --- STATE MANAGEMENT AND RENDERING ---
-        window.renderApp = (newView = currentView) => {
-            currentView = newView;
-            const appContainer = document.getElementById('app-container');
-            const isAdmin = userRole === 'ADMINISTRADOR';
+    // Función para calcular y mostrar métricas diarias
+    window.updateDailyMetrics = () => {
+        let totalSales = 0;
+        let totalOrdersCount = todayOrders.length;
 
-            // Clear container
-            appContainer.innerHTML = '';
+        todayOrders.forEach(order => {
+            totalSales += order.total || 0;
+        });
 
-            // Render based on the current view
-            let content = '';
+        // Actualiza la interfaz solo si estamos en la vista de pedidos
+        if (window.currentView === 'orders') {
+            document.getElementById('daily-sales').textContent = `Q${totalSales.toFixed(2)}`;
+            document.getElementById('daily-orders-count').textContent = totalOrdersCount;
+            window.updateOrdersTable(todayOrders);
+        }
+    };
 
-            if (!userRole) {
-                content = window.renderLogin();
-            } else if (currentView === 'home') {
-                content = window.renderHome();
-            } else if (currentView === 'form') {
-                content = window.renderOrderForm();
-            } else if (currentView === 'orders') {
-                content = window.renderOrdersList(isAdmin);
-            }
+    // Función para actualizar la tabla de pedidos
+    window.updateOrdersTable = (orders) => {
+        const tableBody = document.getElementById('orders-table-body');
+        if (!tableBody) return; // Asegura que el elemento existe
 
-            appContainer.innerHTML = content;
-            lucide.createIcons(); // Initialize Lucide icons
-            window.attachEventListeners();
+        tableBody.innerHTML = ''; // Limpia la tabla
+        const canEdit = userRole === 'ADMINISTRADOR';
 
-            // Display DB status notification if not available
-            if (!isFirestoreAvailable && currentView !== 'login') {
-                 const statusDiv = document.createElement('div');
-                 statusDiv.className = 'fixed top-0 left-0 right-0 bg-yellow-400 text-yellow-900 p-2 text-center font-semibold text-sm z-50';
-                 statusDiv.textContent = '⚠️ Modo de Demostración: La base de datos no está activa. Los pedidos no se guardarán.';
-                 document.body.appendChild(statusDiv);
-            }
-        };
+        if (orders.length === 0) {
+            tableBody.innerHTML = `<tr><td colspan="9" class="text-center py-4 text-gray-500">No hay pedidos registrados para hoy.</td></tr>`;
+            return;
+        }
 
-        window.renderLogin = () => {
-            return `
-                <div id="login-screen" class="p-8 max-w-sm mx-auto my-16 bg-white rounded-xl shadow-water border-4 border-water-primary">
-                    <h1 class="text-3xl font-extrabold text-center mb-4 text-water-primary">AGUA CRISTAL ZONA 6</h1>
-                    <p class="text-center text-sm text-gray-500 mb-6">Inicia Sesión para Continuar</p>
-                    <div id="login-error" class="text-red-600 text-center mb-4 font-semibold hidden"></div>
+        orders.forEach(order => {
+            const date = new Date(order.timestamp);
+            const formattedTime = date.toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' });
+            const isDomicilio = order.type === 'A DOMICILIO';
+            const isDelivered = order.delivered || false;
 
-                    <div class="space-y-4">
-                        <div>
-                            <label for="username" class="block text-sm font-medium text-gray-700">Usuario (ADMINISTRADOR o USUARIO 1)</label>
-                            <input type="text" id="username" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-water-primary focus:border-water-primary sm:text-sm" placeholder="ADMINISTRADOR o USUARIO 1" value="">
+            const row = document.createElement('tr');
+            row.className = 'bg-white border-b hover:bg-gray-50';
+            
+            row.innerHTML = `
+                <td data-label="Hora" class="px-4 py-2">${formattedTime}</td>
+                <td data-label="Tipo" class="px-4 py-2 font-semibold text-center">
+                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${isDomicilio ? 'bg-indigo-100 text-indigo-800' : 'bg-green-100 text-green-800'}">
+                        ${order.type}
+                    </span>
+                </td>
+                <td data-label="Cliente" class="px-4 py-2">${order.clientName}</td>
+                <td data-label="Teléfono" class="px-4 py-2">${order.clientPhone}</td>
+                <td data-label="Dirección" class="px-4 py-2 text-sm max-w-xs truncate">${isDomicilio ? order.address : 'N/A'}</td>
+                <td data-label="Cant." class="px-4 py-2 text-center">${order.quantity}</td>
+                <td data-label="Total" class="px-4 py-2 font-bold text-green-700">Q${order.total.toFixed(2)}</td>
+                <td data-label="Entregado" class="px-4 py-2 text-center">
+                    ${isDomicilio ? `
+                        <input type="checkbox" id="check-${order.id}"
+                            class="h-5 w-5 text-teal-600 border-gray-300 rounded focus:ring-teal-500"
+                            ${isDelivered ? 'checked' : ''}
+                            onclick="window.toggleDeliveredStatus('${order.id}', this.checked)">
+                    ` : 'N/A'}
+                </td>
+                <td data-label="Acciones" class="px-4 py-2 text-center whitespace-nowrap">
+                    ${canEdit ? `
+                        <button onclick="window.showEditModal('${order.id}')"
+                            class="text-indigo-600 hover:text-indigo-900 text-sm font-medium mr-2">Editar</button>
+                        <button onclick="window.deleteOrder('${order.id}')"
+                            class="text-red-600 hover:text-red-900 text-sm font-medium">Eliminar</button>
+                    ` : '<span class="text-gray-400 text-sm">Solo Admin</span>'}
+                </td>
+            `;
+            tableBody.appendChild(row);
+        });
+    };
+
+    // Función para cambiar estado de entregado
+    window.toggleDeliveredStatus = async (orderId, isChecked) => {
+        if (!db) {
+            window.showMessage('Error: Base de datos no disponible.', 'error');
+            return;
+        }
+        try {
+            const orderDocRef = doc(db, ORDER_COLLECTION_PATH, orderId);
+            await updateDoc(orderDocRef, {
+                delivered: isChecked,
+                delivered_by: userId,
+                delivered_at: isChecked ? new Date().toISOString() : null
+            });
+            window.showMessage(`Pedido ${orderId} marcado como ${isChecked ? 'ENTREGADO' : 'PENDIENTE'}.`, 'success');
+        } catch (error) {
+            console.error("Error al actualizar estado de entrega:", error);
+            window.showMessage('Error al actualizar estado de entrega.', 'error');
+        }
+    };
+
+    // Función para eliminar pedido (Solo Admin)
+    window.deleteOrder = async (orderId) => {
+        if (userRole !== 'ADMINISTRADOR') return;
+
+        if (!confirm('¿Estás seguro de que quieres eliminar este pedido? Esta acción es irreversible.')) return;
+
+        if (!db) {
+            window.showMessage('Error: Base de datos no disponible.', 'error');
+            return;
+        }
+
+        try {
+            await deleteDoc(doc(db, ORDER_COLLECTION_PATH, orderId));
+            window.showMessage(`Pedido ${orderId} eliminado correctamente.`, 'success');
+        } catch (error) {
+            console.error("Error al eliminar pedido:", error);
+            window.showMessage('Error al eliminar el pedido.', 'error');
+        }
+    };
+    
+    // --- FUNCIONES DE INTERFAZ Y NAVEGACIÓN ---
+
+    window.currentView = 'login';
+    
+    window.changeView = (newView) => {
+        window.currentView = newView;
+        document.getElementById('app-container').innerHTML = '';
+
+        switch(newView) {
+            case 'login':
+                window.renderLogin();
+                break;
+            case 'home':
+                window.renderHome();
+                break;
+            case 'order-domicilio':
+            case 'order-fisica':
+                window.renderOrderForm(newView.includes('domicilio') ? 'A DOMICILIO' : 'ENTREGA FÍSICA');
+                break;
+            case 'orders':
+                window.renderOrdersView();
+                // Cargar la tabla inmediatamente con los datos en memoria
+                window.updateDailyMetrics();
+                break;
+        }
+    };
+
+    // Renderizado de la pantalla de Login
+    window.renderLogin = () => {
+        document.getElementById('app-container').innerHTML = `
+            <div class="flex flex-col items-center justify-center min-h-screen bg-teal-50">
+                <div class="w-full max-w-md bg-white p-8 rounded-xl card">
+                    <h1 class="text-4xl font-extrabold text-center text-teal-600 mb-6">
+                        AGUA CRISTAL ZONA 6
+                    </h1>
+                    <p class="text-center text-gray-500 mb-8">
+                        Inicia sesión para registrar o ver pedidos.
+                    </p>
+                    <form id="login-form">
+                        <div class="mb-4">
+                            <label for="username" class="block text-sm font-medium text-gray-700 mb-1">Usuario</label>
+                            <select id="username" name="username" class="w-full p-3 border border-teal-300 rounded-lg focus:ring-teal-500 focus:border-teal-500 bg-gray-50">
+                                <option value="ADMINISTRADOR">ADMINISTRADOR</option>
+                                <option value="USUARIO 1">USUARIO 1</option>
+                            </select>
                         </div>
-                        <div>
-                            <label for="password" class="block text-sm font-medium text-gray-700">Contraseña</label>
-                            <input type="password" id="password" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-water-primary focus:border-water-primary sm:text-sm">
+                        <div class="mb-6">
+                            <label for="password" class="block text-sm font-medium text-gray-700 mb-1">Contraseña</label>
+                            <input type="password" id="password" name="password" required
+                                class="w-full p-3 border border-teal-300 rounded-lg focus:ring-teal-500 focus:border-teal-500">
                         </div>
-                        <button id="login-button" class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-lg font-medium text-white bg-water-primary hover:bg-water-secondary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-water-primary transition duration-150 ease-in-out">
-                            Ingresar
+                        <button type="submit" class="w-full btn-primary p-3 rounded-lg font-semibold text-lg hover:bg-teal-700 transition duration-150">
+                            Entrar
                         </button>
+                        <div id="login-message" class="mt-4 text-center text-red-500 font-medium hidden"></div>
+                    </form>
+                </div>
+            </div>
+        `;
+
+        document.getElementById('login-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const messageDiv = document.getElementById('login-message');
+
+            if (USER_CREDENTIALS[username] === password) {
+                userRole = username;
+                window.changeView('home');
+            } else {
+                messageDiv.textContent = 'Contraseña incorrecta. Inténtalo de nuevo.';
+                messageDiv.classList.remove('hidden');
+            }
+        });
+    };
+
+    // Renderizado de la pantalla principal (Home)
+    window.renderHome = () => {
+        document.getElementById('app-container').innerHTML = `
+            <div class="flex flex-col items-center justify-start pt-16 min-h-screen bg-teal-50">
+                <h1 class="text-3xl font-bold text-teal-800 mb-10">Bienvenido, ${userRole}</h1>
+                
+                ${window.getNavMenu()}
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8 w-11/12 max-w-4xl mt-12">
+                    <button onclick="window.changeView('order-domicilio')" 
+                        class="flex flex-col items-center justify-center p-12 bg-white card rounded-2xl btn-secondary hover:bg-teal-400 transition transform hover:scale-105">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mb-3" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+                        <span class="text-2xl font-extrabold">A DOMICILIO</span>
+                        <span class="text-sm mt-1">Precio: Q${PRICE_DOMICILIO.toFixed(2)} / garrafón</span>
+                    </button>
+
+                    <button onclick="window.changeView('order-fisica')" 
+                        class="flex flex-col items-center justify-center p-12 bg-white card rounded-2xl btn-primary hover:bg-teal-700 transition transform hover:scale-105">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mb-3" viewBox="0 0 24 24" fill="currentColor"><path d="M18 10h-2V7c0-1.66-1.34-3-3-3s-3 1.34-3 3v3H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V12c0-1.1-.9-2-2-2zm-5-3c0-.55.45-1 1-1s1 .45 1 1v3h-2V7zm5 15H6V12h12v10z"/></svg>
+                        <span class="text-2xl font-extrabold">ENTREGA FÍSICA</span>
+                        <span class="text-sm mt-1">Precio: Q${PRICE_FISICA.toFixed(2)} / garrafón</span>
+                    </button>
+                </div>
+            </div>
+        `;
+    };
+
+    // Renderizado del Formulario de Pedidos
+    window.renderOrderForm = (type) => {
+        const isDomicilio = type === 'A DOMICILIO';
+        const price = isDomicilio ? PRICE_DOMICILIO : PRICE_FISICA;
+
+        document.getElementById('app-container').innerHTML = `
+            <div class="flex flex-col items-center justify-start pt-8 pb-10 min-h-screen bg-teal-50">
+                <h2 class="text-3xl font-bold text-teal-800 mb-8">${type}</h2>
+                
+                ${window.getNavMenu()}
+
+                <div class="w-11/12 max-w-lg bg-white p-6 md:p-8 rounded-xl card mt-8">
+                    <form id="order-form">
+                        <!-- Precio base -->
+                        <input type="hidden" id="order-type" value="${type}">
+                        <input type="hidden" id="base-price" value="${price}">
+
+                        <!-- Teléfono y Autocompletado -->
+                        <div class="mb-4">
+                            <label for="customer-phone" class="block text-sm font-medium text-gray-700 mb-1">1) Teléfono del Cliente (Clave Única)</label>
+                            <input type="tel" id="customer-phone" name="customer-phone" required
+                                class="w-full p-3 border input-style rounded-lg focus:ring-teal-500 focus:border-teal-500"
+                                placeholder="Ej: 55112233"
+                                oninput="window.autocompleteClientData(this)">
+                            <p id="client-status" class="text-gray-500 text-sm mt-1">Ingrese el número de teléfono para buscar.</p>
+                        </div>
+
+                        <!-- Nombre del Cliente -->
+                        <div class="mb-4">
+                            <label for="customer-name" class="block text-sm font-medium text-gray-700 mb-1">2) Nombre del Cliente</label>
+                            <input type="text" id="customer-name" name="customer-name" required
+                                class="w-full p-3 border input-style rounded-lg focus:ring-teal-500 focus:border-teal-500"
+                                placeholder="Nombre completo">
+                        </div>
+                        
+                        <!-- Cantidad de Garrafones -->
+                        <div class="mb-4">
+                            <label for="quantity" class="block text-sm font-medium text-gray-700 mb-1">3) Cantidad de Garrafones (1-9)</label>
+                            <input type="number" id="quantity" name="quantity" required min="1" max="9" value="1"
+                                class="w-full p-3 border input-style rounded-lg focus:ring-teal-500 focus:border-teal-500 text-center"
+                                oninput="window.calculateTotal()">
+                        </div>
+
+                        <!-- NIT (Opcional) -->
+                        <div class="mb-4">
+                            <label for="customer-nit" class="block text-sm font-medium text-gray-700 mb-1">4) NIT (Opcional)</label>
+                            <input type="text" id="customer-nit" name="customer-nit"
+                                class="w-full p-3 border input-style rounded-lg focus:ring-teal-500 focus:border-teal-500"
+                                placeholder="Ej: 123456-7">
+                        </div>
+
+                        <!-- Dirección (Solo Domicilio) -->
+                        <div id="address-group" class="${isDomicilio ? '' : 'hidden'} mb-6">
+                            <label for="customer-address" class="block text-sm font-medium text-gray-700 mb-1">5) Dirección de Entrega</label>
+                            <textarea id="customer-address" name="customer-address" rows="3" ${isDomicilio ? 'required' : ''}
+                                class="w-full p-3 border input-style rounded-lg focus:ring-teal-500 focus:border-teal-500"
+                                placeholder="Colonia, calle, casa y referencias."></textarea>
+                        </div>
+
+                        <!-- Total del Pedido -->
+                        <div class="flex justify-between items-center bg-teal-100 p-4 rounded-lg mb-6">
+                            <span class="text-lg font-semibold text-teal-800">TOTAL DEL PEDIDO:</span>
+                            <span id="order-total" class="text-3xl font-extrabold text-teal-700">Q10.00</span>
+                        </div>
+
+                        <button type="submit" id="submit-button" class="w-full btn-primary p-3 rounded-lg font-semibold text-lg hover:bg-teal-700 transition duration-150 flex items-center justify-center">
+                            <div id="loading-spinner" class="spinner hidden mr-3"></div>
+                            Guardar Pedido
+                        </button>
+                    </form>
+                    
+                    <!-- Botón de WhatsApp (Se muestra después de guardar) -->
+                    <div id="whatsapp-link-container" class="mt-4 hidden">
+                        <a id="whatsapp-link" href="#" target="_blank" class="w-full flex items-center justify-center p-3 rounded-lg font-semibold text-white bg-green-500 hover:bg-green-600 transition duration-150">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 mr-2" viewBox="0 0 24 24" fill="currentColor"><path d="M12.001 2.001a10 10 0 0 0-9.28 14.15l-1.42 4.41a.5.5 0 0 0 .61.61l4.41-1.42A10 10 0 1 0 12.001 2.001zm3.89 12.55a.8.8 0 0 1-1.13.06l-1.25-1.04a.8.8 0 0 0-.96 0l-1.04 1.25a.8.8 0 0 1-1.14-.06l-2.08-2.08a.8.8 0 0 1-.06-1.14l1.25-1.04a.8.8 0 0 0 0-.96L8.12 7.11a.8.8 0 0 1 1.13-.06l2.08 2.08a.8.8 0 0 0 .96 0l1.25-1.04a.8.8 0 0 1 1.13.06l1.04 1.25a.8.8 0 0 0 0 .96l-1.04 1.25a.8.8 0 0 1-.06 1.13z"/></svg>
+                            Enviar Confirmación por WhatsApp
+                        </a>
                     </div>
                 </div>
-            `;
+            </div>
+        `;
+        window.calculateTotal(); // Inicializa el total
+        document.getElementById('order-form').addEventListener('submit', window.handleFormSubmit);
+    };
+
+    // Renderizado de la vista de Pedidos
+    window.renderOrdersView = () => {
+        const canExport = userRole === 'ADMINISTRADOR';
+
+        document.getElementById('app-container').innerHTML = `
+            <div class="flex flex-col items-center justify-start pt-8 pb-10 min-h-screen bg-teal-50">
+                <h2 class="text-3xl font-bold text-teal-800 mb-8">Control de Pedidos de Hoy</h2>
+                
+                ${window.getNavMenu()}
+
+                <!-- Métricas Diarias -->
+                <div class="w-11/12 max-w-6xl grid grid-cols-2 gap-4 mt-8 mb-6">
+                    <div class="bg-white p-4 rounded-xl card text-center border-b-4 border-teal-500">
+                        <p class="text-lg font-medium text-gray-500">Total de Ventas del Día</p>
+                        <p id="daily-sales" class="text-4xl font-extrabold text-teal-600 mt-1">Q0.00</p>
+                    </div>
+                    <div class="bg-white p-4 rounded-xl card text-center border-b-4 border-teal-500">
+                        <p class="text-lg font-medium text-gray-500">Total de Pedidos</p>
+                        <p id="daily-orders-count" class="text-4xl font-extrabold text-teal-600 mt-1">0</p>
+                    </div>
+                </div>
+
+                <div class="w-11/12 max-w-6xl flex justify-between items-center mb-4">
+                    <h3 class="text-xl font-semibold text-teal-800">Pedidos Registrados</h3>
+                    ${canExport ? `
+                        <button onclick="window.exportToCSV()" class="btn-secondary px-4 py-2 rounded-lg text-sm font-semibold">
+                            Exportar a CSV (Excel)
+                        </button>
+                    ` : ''}
+                </div>
+
+                <!-- Tabla de Pedidos -->
+                <div class="w-11/12 max-w-6xl overflow-x-auto card rounded-xl">
+                    <table class="min-w-full divide-y divide-gray-200 table-fixed table-responsive">
+                        <thead class="bg-teal-50">
+                            <tr>
+                                <th class="w-16 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hora</th>
+                                <th class="w-20 px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Tipo</th>
+                                <th class="w-32 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cliente</th>
+                                <th class="w-24 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Teléfono</th>
+                                <th class="w-48 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dirección</th>
+                                <th class="w-12 px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Cant.</th>
+                                <th class="w-16 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                                <th class="w-16 px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Entregado</th>
+                                <th class="w-24 px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="orders-table-body" class="bg-white divide-y divide-gray-200">
+                            <!-- Filas de pedidos se insertarán aquí por JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+        // Asegurarse de que la tabla se dibuje con los datos actuales
+        window.updateOrdersTable(todayOrders);
+    };
+    
+    // Menú de navegación
+    window.getNavMenu = () => {
+        const isOrdersView = window.currentView === 'orders';
+        const isHomeView = window.currentView === 'home';
+        return `
+            <div class="flex space-x-2 p-2 bg-white rounded-xl shadow-md">
+                <button onclick="window.changeView('home')" 
+                    class="px-4 py-2 rounded-lg font-semibold text-sm transition duration-150 ${isHomeView ? 'bg-teal-600 text-white' : 'text-gray-700 hover:bg-gray-100'}">
+                    Inicio
+                </button>
+                <button onclick="window.changeView('orders')" 
+                    class="px-4 py-2 rounded-lg font-semibold text-sm transition duration-150 ${isOrdersView ? 'bg-teal-600 text-white' : 'text-gray-700 hover:bg-gray-100'}">
+                    Ver Pedidos
+                </button>
+                <button onclick="window.changeView('login')" 
+                    class="px-4 py-2 rounded-lg font-semibold text-sm text-red-600 hover:bg-red-50 transition duration-150">
+                    Salir (${userRole})
+                </button>
+            </div>
+        `;
+    };
+    
+    // Muestra mensajes de confirmación/error
+    window.showMessage = (message, type = 'success') => {
+        const color = type === 'success' ? 'bg-green-500' : type === 'error' ? 'bg-red-500' : 'bg-yellow-500';
+        
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `fixed top-4 right-4 ${color} text-white px-6 py-3 rounded-lg shadow-lg z-50 transition-opacity duration-300`;
+        messageDiv.textContent = message;
+        
+        document.body.appendChild(messageDiv);
+        
+        setTimeout(() => {
+            messageDiv.classList.add('opacity-0');
+            setTimeout(() => messageDiv.remove(), 300);
+        }, 3000);
+    };
+
+    // --- LÓGICA DE FORMULARIO ---
+
+    // Calcula el total del pedido
+    window.calculateTotal = () => {
+        const quantity = parseInt(document.getElementById('quantity').value) || 0;
+        const price = parseFloat(document.getElementById('base-price').value) || 0;
+        const total = quantity * price;
+
+        document.getElementById('order-total').textContent = `Q${total.toFixed(2)}`;
+    };
+
+    // Manejo del envío del formulario
+    window.handleFormSubmit = async (e) => {
+        e.preventDefault();
+        const form = e.target;
+        const submitButton = document.getElementById('submit-button');
+        const loadingSpinner = document.getElementById('loading-spinner');
+
+        if (!db) {
+            window.showMessage('Error: Base de datos no disponible.', 'error');
+            return;
+        }
+
+        // Deshabilitar botón y mostrar spinner
+        submitButton.disabled = true;
+        loadingSpinner.classList.remove('hidden');
+
+        const orderType = document.getElementById('order-type').value;
+        const isDomicilio = orderType === 'A DOMICILIO';
+        const quantity = parseInt(document.getElementById('quantity').value);
+        const price = parseFloat(document.getElementById('base-price').value);
+        const total = quantity * price;
+
+        const orderData = {
+            clientName: form['customer-name'].value.trim(),
+            clientPhone: window.sanitizePhone(form['customer-phone'].value.trim()), // Saneamiento
+            quantity: quantity,
+            nit: form['customer-nit'].value.trim() || '',
+            address: isDomicilio ? form['customer-address'].value.trim() : 'N/A',
+            type: orderType,
+            total: total,
+            delivered: false,
+            timestamp: new Date().toISOString(),
+            recorded_by: userRole,
+            recorded_by_uid: userId,
         };
 
-        window.renderHome = () => {
-            return `
-                <header class="w-full bg-white shadow p-4 flex justify-between items-center sticky top-0 z-10">
-                    <h1 class="text-xl font-bold text-water-dark">Bienvenido, ${userRole}</h1>
-                    <div class="flex items-center space-x-4">
-                        <button id="view-orders-button" class="flex items-center px-4 py-2 text-sm font-medium rounded-full bg-cyan-100 text-water-dark hover:bg-cyan-200 transition">
-                            <i data-lucide="list-ordered" class="w-4 h-4 mr-2"></i> Ver Pedidos
-                        </button>
-                        <button id="logout-button" class="flex items-center px-4 py-2 text-sm font-medium rounded-full bg-red-100 text-red-700 hover:bg-red-200 transition">
-                            <i data-lucide="log-out" class="w-4 h-4 mr-2"></i> Salir
-                        </button>
-                    </div>
+        try {
+            // 1. Guardar/Actualizar la Base de Datos de Clientes (CRM)
+            await window.updateCustomerDB({
+                name: orderData.clientName,
+                phone: orderData.clientPhone,
+                nit: orderData.nit,
+                address: orderData.address
+            });
+            
+            // 2. Guardar el Pedido
+            await addDoc(collection(db, ORDER_COLLECTION_PATH), orderData);
+            
+            window.showMessage(`Pedido de ${orderData.clientName} guardado con éxito! Total: Q${total.toFixed(2)}`, 'success');
+
+            // 3. Mostrar botón de WhatsApp si es A DOMICILIO
+            if (isDomicilio) {
+                window.setupWhatsAppLink(orderData);
+            } else {
+                document.getElementById('whatsapp-link-container').classList.add('hidden');
+            }
+            
+            form.reset();
+            window.calculateTotal(); // Resetear total a Q10.00
+            document.getElementById('client-status').textContent = 'Ingrese el número de teléfono para buscar.';
+            document.getElementById('client-status').className = 'text-gray-500 text-sm mt-1';
+
+
+        } catch (error) {
+            console.error("Error al guardar el pedido:", error);
+            window.showMessage('Error al guardar el pedido.', 'error');
+        } finally {
+            // Habilitar botón y ocultar spinner
+            submitButton.disabled = false;
+            loadingSpinner.classList.add('hidden');
+        }
+    };
+
+    // Función para preparar el enlace de WhatsApp
+    window.setupWhatsAppLink = (order) => {
+        const whatsappContainer = document.getElementById('whatsapp-link-container');
+        const whatsappLink = document.getElementById('whatsapp-link');
+
+        const phone = order.clientPhone;
+        const message = encodeURIComponent(
+            `¡Hola ${order.clientName}!\n\n` +
+            `Tu pedido de Agua Cristal ha sido *REGISTRADO* y se está preparando.\n\n` +
+            `Detalles del Pedido:\n` +
+            `*Cantidad:* ${order.quantity} garrafón(es)\n` +
+            `*Total:* Q${order.total.toFixed(2)}\n` +
+            `*Dirección Confirmada:* ${order.address}\n\n` +
+            `¡Gracias por tu compra! Te confirmaremos cuando el repartidor esté cerca.`
+        );
+
+        whatsappLink.href = `https://wa.me/502${phone}?text=${message}`;
+        whatsappContainer.classList.remove('hidden');
+    };
+
+    // --- FUNCIONALIDAD DE ADMINISTRADOR: EXPORTAR ---
+
+    window.exportToCSV = () => {
+        if (userRole !== 'ADMINISTRADOR') {
+            window.showMessage('Permiso denegado. Solo el Administrador puede exportar.', 'error');
+            return;
+        }
+
+        if (todayOrders.length === 0) {
+            window.showMessage('No hay pedidos hoy para exportar.', 'warning');
+            return;
+        }
+
+        // Headers del CSV
+        let csv = "Hora,Tipo,Cliente,Telefono,NIT,Direccion,Cantidad,Total,Entregado,Registrado Por\n";
+
+        todayOrders.forEach(order => {
+            const date = new Date(order.timestamp);
+            const formattedTime = date.toLocaleTimeString('es-GT');
+            const nit = order.nit || '';
+
+            csv += [
+                formattedTime,
+                order.type,
+                `"${order.clientName.replace(/"/g, '""')}"`, // Escapar comillas
+                order.clientPhone,
+                nit,
+                `"${order.address.replace(/"/g, '""')}"`, // Escapar comillas
+                order.quantity,
+                order.total.toFixed(2),
+                order.delivered ? 'Sí' : 'No',
+                order.recorded_by
+            ].join(',') + "\n";
+        });
+
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const today = new Date().toISOString().substring(0, 10);
+        const filename = `Pedidos_AguaCristal_${today}.csv`;
+
+        // Crear enlace de descarga
+        const link = document.createElement("a");
+        if (link.download !== undefined) {
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            link.setAttribute("download", filename);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+        window.showMessage('Exportación CSV completada.', 'success');
+    };
+
+    // Función para mostrar el modal de edición (Solo Admin)
+    window.showEditModal = (orderId) => {
+        if (userRole !== 'ADMINISTRADOR') return;
+        const order = todayOrders.find(o => o.id === orderId);
+        if (!order) return;
+
+        const isDomicilio = order.type === 'A DOMICILIO';
+        const price = order.type === 'A DOMICILIO' ? PRICE_DOMICILIO : PRICE_FISICA;
+
+        const modalHtml = `
+            <div id="edit-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+                <div class="bg-white p-6 rounded-lg shadow-xl w-11/12 max-w-md">
+                    <h3 class="text-xl font-bold mb-4 text-teal-700">Editar Pedido ${order.id}</h3>
+                    <form id="edit-order-form">
+                        <input type="hidden" id="edit-id" value="${order.id}">
+                        <input type="hidden" id="edit-price" value="${price}">
+                        
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700">Tipo: ${order.type}</label>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label for="edit-name" class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+                            <input type="text" id="edit-name" value="${order.clientName}" required class="w-full p-2 border rounded-lg">
+                        </div>
+
+                        <div class="mb-4">
+                            <label for="edit-phone" class="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+                            <input type="tel" id="edit-phone" value="${order.clientPhone}" required class="w-full p-2 border rounded-lg">
+                        </div>
+
+                        <div class="mb-4">
+                            <label for="edit-quantity" class="block text-sm font-medium text-gray-700 mb-1">Cantidad</label>
+                            <input type="number" id="edit-quantity" value="${order.quantity}" required min="1" max="9" 
+                                class="w-full p-2 border rounded-lg text-center" oninput="window.calculateEditTotal()">
+                        </div>
+
+                        <div class="mb-4 ${isDomicilio ? '' : 'hidden'}">
+                            <label for="edit-address" class="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
+                            <textarea id="edit-address" rows="2" class="w-full p-2 border rounded-lg">${order.address}</textarea>
+                        </div>
+
+                        <div class="mb-6">
+                            <label for="edit-nit" class="block text-sm font-medium text-gray-700 mb-1">NIT (Opcional)</label>
+                            <input type="text" id="edit-nit" value="${order.nit || ''}" class="w-full p-2 border rounded-lg">
+                        </div>
+
+                        <div class="flex justify-between items-center bg-teal-50 p-3 rounded-lg mb-6">
+                            <span class="text-md font-semibold text-teal-800">TOTAL:</span>
+                            <span id="edit-total" class="text-2xl font-bold text-teal-700">Q${order.total.toFixed(2)}</span>
+                        </div>
+
+                        <div class="flex justify-end space-x-3">
+                            <button type="button" onclick="document.getElementById('edit-modal').remove()" 
+                                class="px-4 py-2 bg-gray-300 rounded-lg font-semibold hover:bg-gray-400">Cancelar</button>
+                            <button type="submit" class="px-4 py-2 btn-primary rounded-lg font-semibold">Guardar Cambios</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        document.getElementById('edit-order-form').addEventListener('submit', window.handleEditSubmit);
+
+        // Inicializar cálculo en el modal
+        window.calculateEditTotal = () => {
+            const qty = parseInt(document.getElementById('edit-quantity').value) || 0;
+            const price = parseFloat(document.getElementById('edit-price').value) || 0;
+            document.getElementById('edit-total').textContent = `Q${(qty * price).toFixed(2)}`;
+        };
+    };
+
+    // Manejo del envío de edición (Solo Admin)
+    window.handleEditSubmit = async (e) => {
+        e.preventDefault();
+        const form = e.target;
+        const orderId = document.getElementById('edit-id').value;
+        const quantity = parseInt(document.getElementById('edit-quantity').value);
+        const price = parseFloat(document.getElementById('edit-price').value);
+        const total = quantity * price;
+
+        if (!db) return;
+
+        const updatedData = {
+            clientName: form['edit-name'].value.trim(),
+            clientPhone: window.sanitizePhone(form['edit-phone'].value.trim()),
+            quantity: quantity,
+            nit: form['edit-nit'].value.trim() || '',
+            address: form['edit-address'] ? form['edit-address'].value.trim() : 'N/A',
+            total: total,
+            updated_at: new Date().toISOString()
+        };
+
+        try {
+            const orderDocRef = doc(db, ORDER_COLLECTION_PATH, orderId);
+            await updateDoc(orderDocRef, updatedData);
+            
+            // Actualizar la base de datos de clientes con los datos corregidos
+            await window.updateCustomerDB({
+                name: updatedData.clientName,
+                phone: updatedData.clientPhone,
+                nit: updatedData.nit,
+                address: updatedData.address
+            });
+
+            window.showMessage(`Pedido ${orderId} actualizado correctamente.`, 'success');
+            document.getElementById('edit-modal').remove();
+        } catch (error) {
+            console.error("Error al editar pedido:", error);
+            window.showMessage('Error al editar el pedido.', 'error');
+        }
+    };
+
+    // --- INICIALIZACIÓN ---
+    window.addEventListener('load', () => {
+        window.initFirebase();
+        window.changeView('login');
+    });
+</script>
+
+<!-- Contenedor Principal de la Aplicación -->
+<div id="app-container" class="flex-grow">
+    <!-- El contenido se renderiza aquí por JavaScript -->
+</div>
+
+<!-- Modal de Edición (Será insertado dinámicamente) -->
+
+
+</body>
+</html>
                 </header>
                 <div class="flex-grow flex flex-col justify-center items-center p-6 space-y-8 max-w-4xl mx-auto">
                     <h2 class="text-4xl font-extrabold text-gray-800 text-center mb-6">Selecciona el Tipo de Pedido</h2>
@@ -251,5 +931,6 @@
                 setTimeout(() => window.renderApp('home'), 0);
                 return 'Cargando...';
             }
+
 
             const isDomicilio = type === 'A DOMICILIO';
